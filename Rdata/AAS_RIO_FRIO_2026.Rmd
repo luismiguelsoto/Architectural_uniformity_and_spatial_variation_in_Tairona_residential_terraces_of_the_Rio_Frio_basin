@@ -1,0 +1,2266 @@
+---
+title: "Architectural uniformity and spatial variation in Tairona residential terraces of the Río Frío basin, Colombia"
+subtitle: "Reproducible analyses for an Original Paper in Archaeological and Anthropological Sciences"
+author: "Río Frío Archaeological Research Project"
+date: "`r format(Sys.Date(), '%Y-%m-%d')`"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 2
+    highlight: tango
+    fig_caption: false
+    latex_engine: pdflatex
+    dev: pdf
+  html_notebook:
+    toc: true
+geometry: margin=2cm
+papersize: a4
+fontsize: 10pt
+header-includes:
+  - \usepackage{graphicx}
+  - \usepackage{fvextra}
+  - \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,breakanywhere,breaksymbolleft={},breakanywheresymbolpre={},commandchars=\\\{\},fontsize=\small}
+  - \RecustomVerbatimEnvironment{verbatim}{Verbatim}{breaklines,breakanywhere,breaksymbolleft={},breakanywheresymbolpre={},fontsize=\small}
+  - \usepackage{array}
+  - \usepackage{longtable}
+  - \usepackage{booktabs}
+  - \setlength{\emergencystretch}{3em}
+---
+
+## Data access and reproducibility
+
+The terrace inventory and the survey polygon are loaded directly from the `Rdata`
+folder of the [GitHub repository](https://github.com/luismiguelsoto/Architectural_uniformity_and_spatial_variation_in_Tairona_residential_terraces_of_the_Rio_Frio_basin/tree/main/Rdata).
+The default Git reference is `main`; set `RIOFRIO_GITHUB_REF` to a commit SHA to
+reproduce a fixed repository version. Public repositories require no credentials.
+For private access, set `GITHUB_PAT` in your personal `.Renviron` file (or provide
+`GH_TOKEN` or `GITHUB_TOKEN` in the environment) using a token with read access to
+repository contents, then restart R. Never include a token in this notebook or
+commit it to the repository.
+
+The original terrain analyses require the same `FINAL_DEM_GENERAL_ALOS_PALSAR.tif`
+used in V7. This raster is not one of the two RData files shown in the repository.
+The notebook retains the original local DEM search paths; alternatively, set
+`RIOFRIO_DEM_FILE` to the full path of that raster. Terrain analyses remain enabled
+by default. The notebook stops if the required raster is unavailable rather than
+silently dropping terrain analyses or substituting a different elevation model.
+
+```{r chunk-01-settings}
+# 01. Settings and analysis parameters
+options(stringsAsFactors = FALSE, scipen = 999, width = 88)
+SEED <- 20261110L
+set.seed(SEED)
+RUN_STARTED_AT <- Sys.time()
+FIG_WIDTH_MM <- 174
+FIG_HEIGHT_MM <- c(FIGURE_3 = 110, FIGURE_4 = 210, FIGURE_5 = 215,
+                   FIGURE_6 = 225, FIGURE_7 = 215, FIGURE_8 = 185)
+knitr::opts_chunk$set(echo = TRUE, warning = TRUE, message = FALSE, comment = "##",
+                      fig.width = FIG_WIDTH_MM / 25.4, fig.height = 3.2, out.width = "100%",
+                      fig.align = "center", dpi = 300)
+env_true <- function(key, default = "FALSE") identical(toupper(Sys.getenv(key, default)), "TRUE")
+QUICK_TEST <- env_true("RIOFRIO_QUICK_TEST")
+q_or <- function(full, quick) if (isTRUE(QUICK_TEST)) quick else full
+GITHUB_OWNER <- "luismiguelsoto"
+GITHUB_REPO <- paste0("Architectural_uniformity_and_spatial_variation_in_",
+                      "Tairona_residential_terraces_of_the_Rio_Frio_basin")
+GITHUB_REF <- Sys.getenv("RIOFRIO_GITHUB_REF", "main")
+GITHUB_FOLDER <- "Rdata"
+TERRACES_FILE <- "AAS_TERRACES.RData"
+POLYGON_FILE <- "AAS_POLYGON_SURVEY_RIO_FRIO.RData"
+# Local search paths apply only to the original DEM, not the vector data.
+DATA_DIR_PREFERRED <- paste0("C:/Users/USER/OneDrive - University of Pittsburgh/",
+                             "ARTICULOS INGLES SIERRA NEVADA DE SANTA MARTA/",
+                             "Anthropological and Archaeological Sciences/GITHUB")
+DATA_DIR_OVERRIDE <- Sys.getenv("RIOFRIO_DATA_DIR", "")
+EXTRA_DATA_DIR <- "C:/Users/USER/Documents/INSUMOS_GIS/DIAGNOSTICOS"
+DEM_FILE <- Sys.getenv("RIOFRIO_DEM_FILE", "FINAL_DEM_GENERAL_ALOS_PALSAR.tif")
+USE_DEM_MARKS <- env_true("RIOFRIO_DEM_MARKS", "TRUE")
+USE_DEM_INTENSITY <- env_true("RIOFRIO_DEM_INTENSITY", "FALSE")
+USE_DEM <- USE_DEM_MARKS || USE_DEM_INTENSITY
+RUN_CALIBRATION <- env_true("RIOFRIO_CALIBRATE", "TRUE")
+EXPECTED_TERRACES <- 2526L
+EXPECTED_AREA_KM2 <- 52.1988
+EXPECTED_CRS <- 32618L
+ID_FIELD <- "Terr_ID"
+DIAMETER_FIELD <- "Diam_Terra"
+EAST_FIELD <- "UTM_East"
+NORTH_FIELD <- "UTM_North"
+COORD_TOL_M <- 0.01
+N_SIM <- q_or(10000L, 39L)
+N_PERM <- q_or(10000L, 39L)
+N_BOOT <- q_or(10000L, 39L)
+N_SENS <- q_or(1000L, 39L)
+N_MODEL <- q_or(999L, 39L)
+N_CAL_OUTER <- q_or(199L, 19L)
+N_CAL_INNER <- q_or(99L, 19L)
+ALPHA <- 0.05
+CV_FOLDS <- 5L
+CV_BLOCKS <- 25L
+CV_REPEATS <- q_or(10L, 3L)
+CV_BUFFER_M <- 250
+EDGE_BUFFER_M <- 250
+LOO_REGIONS <- 5L
+CONCENTRATION_RADII_M <- c(50, 100, 200, 500, 1000)
+PRIMARY_RADIUS_M <- 100
+LAG_RADIUS_M <- 50
+MARK_BREAKS_M <- c(0, 25, 50, 100, 200, 350, 500, 750, 1000, 1500, 2000)
+MARK_BREAKS_ALT_M <- c(0, 50, 150, 300, 600, 1000, 1500, 2000)
+MIN_PAIRS_PER_BAND <- 50L
+MIN_TERRACES_PER_BAND <- 10L
+NEAR_MAX_M <- 50
+MIN_LOCAL_NEIGHBORS <- 3L
+FIXED_DOMAIN_M <- c(100, 500)
+DISPLAY_MAX_M <- max(MARK_BREAKS_M)
+PCF_R_M <- seq(0, 1000, by = 20)
+PCF_FINE_R_M <- seq(0, 100, by = 5)
+PCF_SIGMA_M <- 500
+PCF_BW_M <- 20
+DEM_RES_M <- 30
+DEM_SCALE_M <- 150
+BOOT_BLOCK_M <- 500
+CLOSE_LIMIT_M <- 2
+TYPICAL_DIAMETER_M <- c(8, 13)
+RUN_PARALLEL <- TRUE
+REPORT_WIDTH <- 88L
+RUN_VARIANT <- paste0(if (USE_DEM_MARKS) "terrain_marks" else "no_terrain_marks",
+                      if (USE_DEM_INTENSITY) "_terrain_intensity" else "_coordinate_intensity")
+FIG_DIR <- getwd()
+SAVED_FIGURES <- character()
+```
+
+```{r chunk-02-packages}
+# 02. Required packages and thread settings
+req <- c("sf", "ggplot2", "patchwork", "scales", "knitr", "spatstat.geom", "spatstat.explore",
+         "spatstat.random", "spatstat.model", "GET", "curl")
+if (USE_DEM) req <- c(req, "terra")
+missing_packages <- req[!vapply(req, requireNamespace, logical(1), quietly = TRUE)]
+if (length(missing_packages)) {
+  stop("Missing CRAN packages: ", paste(missing_packages, collapse = ", "),
+       ". This notebook never installs packages.")
+}
+if (!requireNamespace("ggspatial", quietly = TRUE)) {
+  stop("Missing CRAN package for the maps: ggspatial. This notebook never installs packages.")
+}
+if (utils::packageVersion("spatstat.explore") < "3.8-2") {
+  stop("spatstat.explore 3.8-2 or later is required.")
+}
+if (utils::packageVersion("ggplot2") < "3.5.0") stop("ggplot2 3.5.0 or later is required.")
+suppressPackageStartupMessages({
+  library(sf); library(ggplot2); library(patchwork)
+})
+Sys.setenv(OMP_NUM_THREADS = "1", OPENBLAS_NUM_THREADS = "1", MKL_NUM_THREADS = "1",
+           BLIS_NUM_THREADS = "1", VECLIB_MAXIMUM_THREADS = "1")
+if (requireNamespace("RhpcBLASctl", quietly = TRUE)) {
+  RhpcBLASctl::blas_set_num_threads(1L)
+  RhpcBLASctl::omp_set_num_threads(1L)
+}
+```
+
+```{r chunk-03-helpers}
+# 03. Reporting and plotting helpers
+fmt_num <- function(x, digits = 4L) {
+  x <- suppressWarnings(as.numeric(x))
+  out <- rep("NA", length(x))
+  ok <- is.finite(x)
+  int_like <- ok & abs(x - round(x)) < 1e-9 & abs(x) < 1e12
+  out[int_like] <- sprintf("%.0f", round(x[int_like]))
+  dec <- ok & !int_like
+  out[dec] <- trimws(formatC(x[dec], digits = digits, format = "g"))
+  inf <- !ok & !is.na(x)
+  out[inf] <- as.character(x[inf])
+  out
+}
+fmt_p <- function(p) {
+  p <- suppressWarnings(as.numeric(p))
+  ifelse(is.finite(p), trimws(formatC(p, digits = 2, format = "fg")), "NA")
+}
+fmt_value <- function(v, digits = 4L) {
+  if (is.factor(v)) v <- as.character(v)
+  if (is.logical(v)) return(ifelse(is.na(v), "NA", ifelse(v, "TRUE", "FALSE")))
+  if (is.numeric(v)) return(fmt_num(v, digits))
+  v <- as.character(v)
+  v[is.na(v)] <- "NA"
+  gsub(";", ",", v, fixed = TRUE)
+}
+interval_text <- function(lo, hi, digits = 4L) paste(fmt_num(lo, digits), "to", fmt_num(hi, digits))
+vector_text <- function(x, digits = 4L) paste(fmt_value(x, digits), collapse = ", ")
+hard_split <- function(s, width) {
+  n <- nchar(s, type = "chars")
+  if (n <= width) return(s)
+  starts <- seq(1L, n, by = width)
+  substring(s, starts, pmin(starts + width - 1L, n))
+}
+split_long <- function(s, width, indent) {
+  if (nchar(s, type = "width") <= width) return(s)
+  lead <- nchar(s) - nchar(sub("^ +", "", s))
+  w <- strwrap(s, width = width, indent = lead, exdent = max(lead, indent))
+  unlist(lapply(w, hard_split, width = width), use.names = FALSE)
+}
+pack_fields <- function(f, width = REPORT_WIDTH, indent = 4L) {
+  out <- character(); cur <- ""
+  for (x in f) {
+    trial <- if (nzchar(cur)) paste0(cur, "; ", x) else x
+    if (nchar(trial, type = "width") <= width) { cur <- trial; next }
+    if (nzchar(cur)) out <- c(out, cur)
+    cur <- paste0(if (length(out)) strrep(" ", indent) else "", x)
+  }
+  if (nzchar(cur)) out <- c(out, cur)
+  unlist(lapply(out, split_long, width = width, indent = indent), use.names = FALSE)
+}
+emit_rows <- function(...) {
+  x <- list(...)
+  n <- max(vapply(x, length, integer(1)))
+  for (i in seq_len(n)) {
+    f <- vapply(seq_along(x), function(j) {
+      v <- x[[j]]
+      paste0(names(x)[j], "=", fmt_value(v[if (length(v) == 1L) 1L else i]))
+    }, character(1))
+    writeLines(pack_fields(f))
+  }
+  invisible(NULL)
+}
+emit_text <- function(key, text) {
+  for (s in text) writeLines(pack_fields(paste0(key, "=", gsub(";", ",", s, fixed = TRUE))))
+  invisible(NULL)
+}
+report_start <- function(id, shows, encoding) {
+  writeLines(pack_fields(c(paste0("REPORT=", id), paste0("SHOWS=", shows))))
+  emit_text("ENCODING", encoding)
+}
+heading <- function(text, level = 1L) {
+  cat("\n\n", strrep("#", level), " ", text, "\n\n", sep = "")
+}
+check_caption <- function(s) { stopifnot(nchar(s, type = "chars") < 400L); s }
+print_caption <- function(kind, number, caption) {
+  caption <- sub("[.][[:space:]]*$", "", check_caption(caption))
+  label <- if (kind == "Figure") "Fig." else kind
+  cat("\n\n**", label, " ", number, "** ", caption, "\n\n", sep = "")
+}
+latex_escape <- function(x) {
+  x <- as.character(x)
+  x <- gsub("([&%$#_{}])", "\\\\\\1", x)
+  x <- gsub("~", "\\textasciitilde{}", x, fixed = TRUE)
+  x <- gsub("^", "\\textasciicircum{}", x, fixed = TRUE)
+  x
+}
+latex_table <- function(df, total = 0.92, chars_per_line = 90) {
+  m <- as.matrix(df); storage.mode(m) <- "character"; m[is.na(m)] <- "NA"
+  cells <- rbind(names(df), m)
+  words <- apply(cells, 2, function(col)
+    max(nchar(unlist(strsplit(col, "[[:space:]]+"))), 1L))
+  avg <- apply(cells, 2, function(col) mean(nchar(col)))
+  base <- words + 1
+  spare <- max(0, chars_per_line - sum(base))
+  extra <- pmax(avg - base, 0)
+  w <- base + if (sum(extra) > 0) spare * extra / sum(extra) else spare / length(base)
+  w <- w / sum(w) * total
+  spec <- paste0("@{}", paste0(">{\\raggedright\\arraybackslash}p{", sprintf("%.3f", w),
+                               "\\linewidth}", collapse = ""), "@{}")
+  body <- matrix(latex_escape(m), nrow = nrow(m))
+  rows <- apply(body, 1, function(r) paste0(paste(r, collapse = " & "), " \\\\"))
+  c("\\begingroup\\small", "\\setlength{\\tabcolsep}{3pt}",
+    paste0("\\begin{longtable}{", spec, "}"), "\\toprule",
+    paste0(paste(latex_escape(names(df)), collapse = " & "), " \\\\"), "\\midrule",
+    "\\endhead", "\\bottomrule", "\\endlastfoot", rows, "\\end{longtable}", "\\endgroup")
+}
+print_table <- function(df) {
+  if (isTRUE(knitr::is_latex_output())) {
+    cat("\n", paste(latex_table(df), collapse = "\n"), "\n\n", sep = "")
+  } else {
+    cat("\n\n"); print(knitr::kable(df, format = "pipe")); cat("\n\n")
+  }
+}
+qv <- function(x, p = c(.025, .5, .975)) as.numeric(stats::quantile(x, p, names = FALSE))
+mc_p <- function(obs, sim) {
+  min(1, 2 * min((1 + sum(sim <= obs)) / (length(sim) + 1),
+                 (1 + sum(sim >= obs)) / (length(sim) + 1)))
+}
+tint <- function(col, f = 0.7) {
+  m <- grDevices::col2rgb(col) / 255
+  grDevices::rgb(t(m + (1 - m) * f))
+}
+COL <- c(observed = "#440154", reference = "#3B528B", global = "#21908C", regional = "#5DC863",
+         outside = "#F89540", fit = "#D7191C", neutral = "black")
+theme_v7 <- function() {
+  theme_bw(base_size = 9) +
+    theme(text = element_text(colour = "black"),
+          line = element_line(colour = "black"),
+          rect = element_rect(colour = "black"),
+          legend.position = "bottom", legend.box = "vertical", legend.title.position = "top",
+          legend.margin = margin(0, 0, 0, 0), legend.key.size = grid::unit(3.5, "mm"),
+          legend.text = element_text(size = 7.5, colour = "black"),
+          legend.title = element_text(size = 7.5, colour = "black"),
+          panel.grid = element_blank(),
+          panel.grid.minor = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.border = element_rect(fill = NA, colour = "black"),
+          strip.background = element_rect(fill = "white", colour = "black"),
+          strip.text = element_text(face = "bold", size = 7.5, colour = "black"),
+          axis.text = element_text(size = 7, colour = "black"),
+          axis.title = element_text(size = 8.5, colour = "black"),
+          axis.ticks = element_line(colour = "black"),
+          plot.title = element_text(colour = "black"),
+          plot.subtitle = element_text(colour = "black"),
+          plot.caption = element_text(colour = "black"),
+          plot.tag = element_text(face = "bold", size = 10, colour = "black"),
+          plot.margin = margin(3, 5, 3, 3))
+}
+save_figure <- function(plot, name, height_mm) {
+  stopifnot(height_mm <= 234, name %in% names(FIG_HEIGHT_MM))
+  file <- file.path(FIG_DIR, paste0(name, ".pdf"))
+  ggplot2::ggsave(file, plot, width = FIG_WIDTH_MM, height = height_mm, units = "mm",
+                  device = grDevices::pdf, bg = "white", useDingbats = FALSE)
+  file
+}
+band_text <- function(meta) paste0(fmt_num(meta$Lower_m), "-", fmt_num(meta$Upper_m))
+bands_outside <- function(bt, flag) if (any(flag)) paste(bt[flag], collapse = ", ") else "none"
+outside_runs <- function(x, flag) {
+  flag <- as.logical(flag)
+  if (!any(flag)) return("none")
+  r <- rle(flag)
+  ends <- cumsum(r$lengths)
+  starts <- ends - r$lengths + 1L
+  s <- starts[r$values]
+  e <- ends[r$values]
+  paste(ifelse(s == e, fmt_num(x[s]), paste0(fmt_num(x[s]), "-", fmt_num(x[e]))),
+        collapse = ",")
+}
+value_at <- function(df, at, col = "Observed") {
+  vapply(at, function(z) df[[col]][which.min(abs(df$Distance_m - z))], numeric(1))
+}
+envelope_at <- function(df, at) {
+  k <- which.min(abs(df$Distance_m - at))
+  interval_text(df$Low[k], df$High[k], 3)
+}
+```
+
+```{r chunk-04-parallel-setup}
+# 04. Parallel computation and internal cache
+if (exists("CLUSTER", inherits = FALSE) && inherits(CLUSTER, "cluster")) {
+  try(parallel::stopCluster(CLUSTER), silent = TRUE)
+}
+CLUSTER <- NULL
+logical_processors <- suppressWarnings(as.integer(parallel::detectCores(logical = TRUE)))
+if (!is.finite(logical_processors) || logical_processors < 1L) logical_processors <- 2L
+physical_processors <- suppressWarnings(as.integer(parallel::detectCores(logical = FALSE)))
+if (!is.finite(physical_processors) || physical_processors < 1L) {
+  physical_processors <- logical_processors
+}
+requested_workers <- suppressWarnings(as.integer(Sys.getenv("RIOFRIO_WORKERS", "")))
+CPU_WORKERS <- if (!isTRUE(RUN_PARALLEL)) {
+  1L
+} else if (is.finite(requested_workers) && requested_workers >= 1L) {
+  min(requested_workers, logical_processors)
+} else {
+  max(1L, logical_processors - 2L)
+}
+if (QUICK_TEST) CPU_WORKERS <- min(CPU_WORKERS, 2L)
+PARALLEL_BLOCKS <- CPU_WORKERS
+USE_CACHE <- env_true("RIOFRIO_CACHE", "TRUE")
+CACHE_DIR <- Sys.getenv("RIOFRIO_CACHE_DIR", tools::R_user_dir("riofrio_terraces", "cache"))
+if (USE_CACHE) dir.create(CACHE_DIR, showWarnings = FALSE, recursive = TRUE)
+CACHE_FINGERPRINT <- c(R.version.string, "per-realization seeds",
+                       vapply(req, function(p) paste(p, as.character(utils::packageVersion(p))),
+                              character(1)))
+MC_LOG <- data.frame(Label = character(), B = integer(), Cached = logical(),
+                     Seconds = numeric())
+hash_object <- function(x) {
+  f <- tempfile(fileext = ".bin")
+  on.exit(unlink(f), add = TRUE)
+  writeBin(serialize(x, NULL, version = 3L), f)
+  unname(tools::md5sum(f))
+}
+mc_worker <- function(ids, callback, p, seed0) {
+  values <- lapply(ids, function(k) {
+    set.seed(seed0 + k)
+    z <- callback(k, p)
+    if (!is.numeric(z) || any(!is.finite(z))) stop("Invalid realization ", k)
+    as.numeric(z)
+  })
+  list(ids = ids, values = do.call(rbind, values))
+}
+environment(mc_worker) <- baseenv()
+cache_file <- function(B, step, payload, seed, label) {
+  is_fun <- vapply(payload, is.function, logical(1))
+  code <- c(deparse(mc_worker), deparse(step),
+            unlist(lapply(payload[is_fun], deparse), use.names = FALSE))
+  key <- hash_object(list(label, as.integer(seed), as.integer(B), CACHE_FINGERPRINT, code,
+                          names(payload), payload[!is_fun]))
+  file.path(CACHE_DIR, paste0(gsub("[^A-Za-z0-9]+", "_", label), "_", key, ".rds"))
+}
+get_cluster <- function() {
+  if (CPU_WORKERS < 2L) return(NULL)
+  alive <- !is.null(CLUSTER) &&
+    isTRUE(tryCatch(all(unlist(parallel::clusterCall(CLUSTER, function() TRUE))),
+                    error = function(e) FALSE))
+  if (!alive) {
+    CLUSTER <<- tryCatch(parallel::makeCluster(CPU_WORKERS, type = "PSOCK"),
+                         error = function(e) {
+                           warning("PSOCK unavailable: ", conditionMessage(e))
+                           NULL
+                         })
+    if (!is.null(CLUSTER)) {
+      parallel::clusterCall(CLUSTER, function() {
+        Sys.setenv(OMP_NUM_THREADS = "1", OPENBLAS_NUM_THREADS = "1", MKL_NUM_THREADS = "1",
+                   BLIS_NUM_THREADS = "1")
+        if (requireNamespace("RhpcBLASctl", quietly = TRUE)) {
+          RhpcBLASctl::blas_set_num_threads(1L)
+          RhpcBLASctl::omp_set_num_threads(1L)
+        }
+        NULL
+      })
+    }
+  }
+  CLUSTER
+}
+mc_run <- function(B, step, payload, seed, label) {
+  stopifnot(B >= 1L, seed + B < .Machine$integer.max)
+  environment(step) <- baseenv()
+  started <- Sys.time()
+  file <- if (USE_CACHE) cache_file(B, step, payload, seed, label) else NA_character_
+  m <- NULL
+  if (USE_CACHE && file.exists(file)) {
+    m <- tryCatch(readRDS(file), error = function(e) NULL)
+    if (!is.matrix(m) || nrow(m) != B || !all(is.finite(m))) m <- NULL
+  }
+  cached <- !is.null(m)
+  if (!cached) {
+    tasks <- split(seq_len(B), rep(seq_len(min(B, PARALLEL_BLOCKS)), length.out = B))
+    cl <- if (length(tasks) > 1L) get_cluster() else NULL
+    out <- if (is.null(cl)) {
+      lapply(tasks, mc_worker, callback = step, p = payload, seed0 = seed)
+    } else {
+      parallel::parLapply(cl, tasks, mc_worker, callback = step, p = payload, seed0 = seed)
+    }
+    ids <- unlist(lapply(out, `[[`, "ids"), use.names = FALSE)
+    m <- do.call(rbind, lapply(out, `[[`, "values"))[order(ids), , drop = FALSE]
+    stopifnot(identical(sort(ids), seq_len(B)), nrow(m) == B, all(is.finite(m)))
+    if (USE_CACHE) saveRDS(m, file)
+  }
+  MC_LOG <<- rbind(MC_LOG, data.frame(Label = label, B = B, Cached = cached,
+                                      Seconds = round(as.numeric(difftime(Sys.time(), started,
+                                                                          units = "secs")), 1)))
+  m
+}
+emit_rows(PARALLEL = if (CPU_WORKERS > 1L) "PSOCK, persistent" else "serial",
+          LOGICAL_PROCESSORS = logical_processors, PHYSICAL_PROCESSORS = physical_processors,
+          WORKERS = CPU_WORKERS, QUICK_TEST = QUICK_TEST, RESULTS_FOR_INFERENCE = !QUICK_TEST)
+emit_rows(TERRAIN_MARKS = USE_DEM_MARKS, TERRAIN_INTENSITY = USE_DEM_INTENSITY,
+          CALIBRATION = RUN_CALIBRATION, N_PRIMARY = N_PERM, N_SENSITIVITY = N_SENS)
+emit_rows(CACHE = USE_CACHE, CACHE_DIR = CACHE_DIR)
+emit_text("R_VERSION", R.version.string)
+```
+
+```{r chunk-05-heading-data, results='asis', echo=FALSE}
+# 05. Heading data
+heading("1. Data, observation window and terrain context")
+```
+
+```{r chunk-06-inputs}
+# 06. Download GitHub RData files and validate spatial inputs
+# Keep the original local resolver exclusively for the DEM.
+search_dirs <- unique(Filter(nzchar, c(DATA_DIR_OVERRIDE, DATA_DIR_PREFERRED, getwd(),
+                                       EXTRA_DATA_DIR)))
+resolve_input <- function(file) {
+  candidates <- if (grepl("^([A-Za-z]:|/)", file)) file else file.path(search_dirs, file)
+  found <- candidates[file.exists(candidates)]
+  if (!length(found)) {
+    stop("DEM not found: ", file, ". Searched: ", paste(search_dirs, collapse = " | "),
+         ". Set RIOFRIO_DEM_FILE to the original raster's full path.")
+  }
+  normalizePath(found[1], winslash = "/", mustWork = TRUE)
+}
+GITHUB_INPUT_DIR <- tempfile("aas_rio_frio_github_")
+if (!dir.create(GITHUB_INPUT_DIR, recursive = TRUE)) {
+  stop("Unable to create a temporary directory for GitHub inputs")
+}
+
+download_github_rdata <- function(file) {
+  stopifnot(nzchar(GITHUB_REF), basename(file) == file)
+  # Read credentials from the environment only; never print or save them.
+  tokens <- Sys.getenv(c("GITHUB_PAT", "GH_TOKEN", "GITHUB_TOKEN"), unset = "")
+  tokens <- unname(tokens[nzchar(tokens)])
+  token <- if (length(tokens)) tokens[1] else ""
+  ref <- utils::URLencode(GITHUB_REF, reserved = TRUE)
+  remote_path <- paste(GITHUB_FOLDER, file, sep = "/")
+  handle <- curl::new_handle(connecttimeout = 30L, timeout = 300L,
+                              followlocation = TRUE)
+  if (nzchar(token)) {
+    # GitHub Contents API returns the binary file with this media type.
+    remote_url <- paste0("https://api.github.com/repos/", GITHUB_OWNER, "/",
+                         GITHUB_REPO, "/contents/", remote_path, "?ref=", ref)
+    curl::handle_setheaders(handle, Authorization = paste("Bearer", token),
+                            Accept = "application/vnd.github.raw+json",
+                            `X-GitHub-Api-Version` = "2022-11-28",
+                            `User-Agent` = "AAS-RIO-FRIO-2026")
+  } else {
+    remote_url <- paste0("https://raw.githubusercontent.com/", GITHUB_OWNER, "/",
+                         GITHUB_REPO, "/", ref, "/", remote_path)
+  }
+  dest <- file.path(GITHUB_INPUT_DIR, file)
+  response <- tryCatch(curl::curl_fetch_disk(remote_url, dest, handle = handle),
+                       error = function(e) {
+                         unlink(dest)
+                         stop("GitHub download failed for ", file, ": ",
+                              conditionMessage(e), call. = FALSE)
+                       })
+  if (response$status_code != 200L || !file.exists(dest) ||
+      !isTRUE(file.info(dest)$size > 0)) {
+    unlink(dest)
+    stop("GitHub download failed for ", file, " (HTTP ", response$status_code,
+         "). Check the repository, reference, path, and read permissions. ",
+         "For a private repository, configure GITHUB_PAT and restart R.", call. = FALSE)
+  }
+  normalizePath(dest, winslash = "/", mustWork = TRUE)
+}
+
+read_sf_rdata <- function(path) {
+  # Isolate serialized objects from the notebook's analysis environment.
+  e <- new.env(parent = emptyenv())
+  object_names <- tryCatch(load(path, envir = e), error = function(err) {
+    stop("Invalid RData file ", basename(path), ": ", conditionMessage(err),
+         call. = FALSE)
+  })
+  sf_names <- object_names[vapply(object_names, function(nm) {
+    inherits(get(nm, envir = e, inherits = FALSE), "sf")
+  }, logical(1))]
+  if (length(sf_names) != 1L) {
+    stop("Expected exactly one sf object in ", basename(path), "; found ",
+         length(sf_names), ". Objects: ", paste(object_names, collapse = ", "),
+         call. = FALSE)
+  }
+  get(sf_names[1], envir = e, inherits = FALSE)
+}
+
+terrace_path <- download_github_rdata(TERRACES_FILE)
+polygon_path <- download_github_rdata(POLYGON_FILE)
+architecture <- read_sf_rdata(terrace_path)
+survey <- read_sf_rdata(polygon_path)
+for (obj in list(architecture, survey)) {
+  if (!identical(as.integer(sf::st_crs(obj)$epsg), EXPECTED_CRS)) {
+    stop("Inputs must use EPSG:32618")
+  }
+  if (any(sf::st_is_empty(obj)) || !all(sf::st_is_valid(obj) %in% TRUE)) {
+    stop("Invalid or empty input geometry")
+  }
+}
+architecture <- sf::st_zm(architecture, drop = TRUE, what = "ZM")
+survey <- sf::st_zm(survey, drop = TRUE, what = "ZM")
+stopifnot(all(as.character(sf::st_geometry_type(architecture)) == "POINT"),
+          all(as.character(sf::st_geometry_type(survey)) %in% c("POLYGON", "MULTIPOLYGON")))
+needed_fields <- c(ID_FIELD, DIAMETER_FIELD, EAST_FIELD, NORTH_FIELD)
+if (length(setdiff(needed_fields, names(architecture)))) {
+  stop("Missing fields: ", paste(setdiff(needed_fields, names(architecture)), collapse = ", "))
+}
+survey_union <- sf::st_union(sf::st_geometry(survey))
+inside <- lengths(sf::st_covered_by(architecture, survey_union)) > 0L
+if (nrow(architecture) != EXPECTED_TERRACES || any(!inside)) {
+  stop("Expected ", EXPECTED_TERRACES, " terraces inside the survey polygon; found ",
+       nrow(architecture), " rows and ", sum(!inside), " outside")
+}
+attr_xy <- cbind(as.numeric(architecture[[EAST_FIELD]]), as.numeric(architecture[[NORTH_FIELD]]))
+geom_xy <- sf::st_coordinates(architecture)[, 1:2, drop = FALSE]
+coord_gap <- sqrt(rowSums((attr_xy - geom_xy)^2))
+if (any(!is.finite(coord_gap)) || max(coord_gap) > COORD_TOL_M) {
+  stop("Coordinate fields and point geometry disagree")
+}
+terraces <- data.frame(Terrace_ID = trimws(as.character(architecture[[ID_FIELD]])),
+                       X = geom_xy[, 1], Y = geom_xy[, 2],
+                       Diameter_m = suppressWarnings(as.numeric(as.character(
+                         architecture[[DIAMETER_FIELD]]))))
+if (anyNA(terraces$Terrace_ID) || any(!nzchar(terraces$Terrace_ID)) ||
+    anyDuplicated(terraces$Terrace_ID)) {
+  stop("Missing or duplicated terrace IDs")
+}
+if (any(!is.finite(as.matrix(terraces[, c("X", "Y", "Diameter_m")]))) ||
+    any(terraces$Diameter_m <= 0)) {
+  stop("Invalid coordinates or diameters")
+}
+if (anyDuplicated(terraces[, c("X", "Y")])) stop("Coincident terrace centers")
+ord <- order(terraces$Terrace_ID)
+terraces <- terraces[ord, ]
+architecture <- architecture[ord, ]
+rownames(terraces) <- NULL
+D <- terraces$Diameter_m
+n <- length(D)
+D_ORIGINAL <- D
+terraces$Area_equiv_m2 <- pi * D^2 / 4
+area_km2 <- as.numeric(sf::st_area(survey_union)) / 1e6
+if (abs(area_km2 - EXPECTED_AREA_KM2) > 0.05) stop("Unexpected survey area")
+bb <- sf::st_bbox(survey_union)
+origin <- c(as.numeric(bb["xmin"]), as.numeric(bb["ymin"]))
+W <- spatstat.geom::shift(spatstat.geom::as.owin(survey_union), vec = -origin)
+xy_local <- sweep(as.matrix(terraces[, c("X", "Y")]), 2, origin, "-")
+Xpp <- spatstat.geom::ppp(xy_local[, 1], xy_local[, 2], window = W, check = TRUE)
+if (Xpp$n != n || abs(spatstat.geom::area.owin(W) / 1e6 - area_km2) > 0.01) {
+  stop("Observation window conversion failed")
+}
+edge_m <- as.numeric(sf::st_distance(architecture, sf::st_boundary(survey_union)))
+set.seed(SEED + 100L)
+regions <- stats::kmeans(xy_local, centers = LOO_REGIONS, nstart = 25, iter.max = 200)$cluster
+```
+
+```{r chunk-07-terrain}
+# 07. Terrain covariates
+terrain_cov <- list()
+terrain_at <- NULL
+terrain_raw <- NULL
+dem_path <- NULL
+dem_info <- NULL
+if (USE_DEM) {
+  dem_path <- resolve_input(DEM_FILE)
+  dem <- terra::rast(dem_path)
+  if (terra::nlyr(dem) != 1L || !nzchar(terra::crs(dem))) {
+    stop("The DEM must be one georeferenced elevation layer")
+  }
+  native_res <- terra::res(dem)
+  native_crs <- tryCatch(as.character(terra::crs(dem, describe = TRUE)$code),
+                         error = function(e) NA_character_)
+  aoi_native <- sf::st_bbox(sf::st_transform(sf::st_buffer(survey_union, 2000),
+                                             sf::st_crs(terra::crs(dem))))
+  dem <- terra::crop(dem, terra::ext(as.numeric(aoi_native[c("xmin", "xmax", "ymin", "ymax")])))
+  dem <- terra::project(dem, "EPSG:32618", method = "bilinear", res = DEM_RES_M)
+  dem <- terra::crop(dem, terra::ext(as.numeric(bb["xmin"]) - 1000, as.numeric(bb["xmax"]) + 1000,
+                                     as.numeric(bb["ymin"]) - 1000, as.numeric(bb["ymax"]) + 1000))
+  win <- max(3L, 2L * floor(DEM_SCALE_M / (2 * terra::res(dem)[1])) + 1L)
+  sm <- terra::focal(dem, w = win, fun = "mean", na.rm = TRUE)
+  sl <- terra::terrain(sm, v = "slope", unit = "degrees", neighbors = 8)
+  ras <- c(sm, sl, dem - sm)
+  names(ras) <- c("elev", "slope", "tpi")
+  vals <- as.data.frame(terra::extract(ras, as.matrix(terraces[, c("X", "Y")])))
+  vals <- vals[, names(ras), drop = FALSE]
+  if (any(!is.finite(as.matrix(vals)))) stop("The DEM does not cover every terrace center")
+  terrain_raw <- vals
+  terrain_at <- as.data.frame(scale(vals))
+  names(terrain_at) <- names(ras)
+  if (qr(cbind(1, as.matrix(terrain_at)))$rank < 4L) stop("Terrain covariates are collinear")
+  if (USE_DEM_INTENSITY) {
+    for (nm in names(ras)) {
+      rr <- ras[[nm]]
+      mat <- as.matrix(rr, wide = TRUE)
+      xx <- terra::xFromCol(rr, seq_len(ncol(mat))) - origin[1]
+      yy <- rev(terra::yFromRow(rr, seq_len(nrow(mat)))) - origin[2]
+      mat <- (mat[nrow(mat):1, , drop = FALSE] - mean(vals[[nm]])) / stats::sd(vals[[nm]])
+      inside_win <- spatstat.geom::inside.owin(rep(xx, each = length(yy)),
+                                               rep(yy, times = length(xx)), W)
+      if (any(!is.finite(as.vector(mat)[inside_win]))) {
+        stop("Missing DEM values inside the survey window")
+      }
+      terrain_cov[[nm]] <- spatstat.geom::im(mat, xcol = xx, yrow = yy)
+    }
+  }
+  dem_info <- list(file = basename(dem_path), native_res = native_res, native_crs = native_crs,
+                   window_cells = win, cell_m = terra::res(dem)[1])
+}
+```
+
+```{r chunk-08-data-report-heading, results='asis', echo=FALSE}
+# 08. Data report heading
+heading("Data. Numerical description", 4L)
+```
+
+```{r chunk-09-data-report}
+# 09. Data report
+report_start("Data", "Terrace inventory, observation window and terrain context",
+             "one line per item")
+emit_rows(TERRACES = n, SURVEY_KM2 = fmt_num(area_km2, 6), TERRACES_PER_KM2 = n / area_km2,
+          WITHIN_250_M_OF_EDGE = sum(edge_m < EDGE_BUFFER_M),
+          MAX_COORDINATE_GAP_M = max(coord_gap))
+emit_rows(REGIONS = LOO_REGIONS, TERRACES_PER_REGION = vector_text(tabulate(regions, LOO_REGIONS)))
+if (USE_DEM) {
+  cors <- stats::cor(terrain_raw, method = "spearman")
+  emit_rows(DEM = dem_info$file, NATIVE_CELL = vector_text(dem_info$native_res, 6),
+            NATIVE_CRS_CODE = dem_info$native_crs, ANALYSIS_CELL_M = dem_info$cell_m,
+            CONTEXT_WINDOW_M = dem_info$window_cells * dem_info$cell_m)
+  emit_rows(COVARIATE = names(terrain_raw), MEAN = vapply(terrain_raw, mean, numeric(1)),
+            SD = vapply(terrain_raw, stats::sd, numeric(1)))
+  emit_rows(SPEARMAN_ELEV_SLOPE = cors["elev", "slope"], SPEARMAN_ELEV_TPI = cors["elev", "tpi"],
+            SPEARMAN_SLOPE_TPI = cors["slope", "tpi"])
+}
+emit_text("NOTE", "Recorded diameters and coordinates are analyzed without modification")
+```
+
+```{r chunk-10-heading-figures, results='asis', echo=FALSE}
+# 10. Heading figures
+heading("2. Manuscript figures (Figures 1 and 2 are supplied separately)")
+heading("Figure 3. Distribution of terrace diameters", 2L)
+```
+
+```{r chunk-11-fig3-compute}
+# 11. Figure 3 compute
+gini <- function(x) {
+  x <- sort(x); k <- length(x)
+  sum((2 * seq_len(k) - k - 1) * x) / (k * sum(x))
+}
+qd <- qv(D, c(.05, .25, .5, .75, .95))
+diam_freq <- data.frame(Diameter_m = sort(unique(D)))
+diam_freq$Terraces <- tabulate(match(D, diam_freq$Diameter_m), nrow(diam_freq))
+diam_summary <- data.frame(Mean = mean(D), SD = stats::sd(D), Median = qd[3], Q1 = qd[2],
+                           Q3 = qd[4], MAD = stats::mad(D), Min = min(D), Max = max(D),
+                           P05 = qd[1], P95 = qd[5], CV = 100 * stats::sd(D) / mean(D),
+                           Gini_D = gini(D), Gini_area = gini(terraces$Area_equiv_m2),
+                           Share_typical = mean(D >= TYPICAL_DIAMETER_M[1] &
+                                                  D <= TYPICAL_DIAMETER_M[2]))
+```
+
+```{r chunk-12-fig3-plot, fig.height=110 / 25.4}
+# 12. Figure 3 plot
+p3a <- ggplot(diam_freq, aes(Diameter_m, Terraces, fill = Terraces)) +
+  geom_col(width = 0.8, colour = "black", linewidth = 0.15) +
+  geom_vline(xintercept = diam_summary$Median, linetype = "dashed", colour = COL[["fit"]],
+             linewidth = 0.45) +
+  scale_fill_viridis_c(option = "viridis", guide = "none") +
+  scale_x_continuous(breaks = seq(0, 40, 5), expand = expansion(mult = 0.02)) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.05))) +
+  labs(x = "Recorded diameter (m)", y = "Terraces") +
+  theme_v7()
+p3b <- ggplot(terraces, aes(Diameter_m)) +
+  annotate("rect", xmin = diam_summary$Q1, xmax = diam_summary$Q3, ymin = -Inf, ymax = Inf,
+           fill = tint(COL[["global"]], 0.75)) +
+  geom_hline(yintercept = 0.5, linetype = "dotted", colour = COL[["neutral"]], linewidth = 0.35) +
+  geom_vline(xintercept = diam_summary$Median, linetype = "dashed", colour = COL[["fit"]],
+             linewidth = 0.45) +
+  stat_ecdf(geom = "step", colour = COL[["observed"]], linewidth = 0.65) +
+  scale_x_continuous(breaks = seq(0, 40, 5), expand = expansion(mult = 0.02)) +
+  scale_y_continuous(breaks = seq(0, 1, 0.25), labels = scales::label_number(accuracy = 0.01)) +
+  labs(x = "Recorded diameter (m)", y = "Cumulative proportion") +
+  theme_v7()
+p3 <- (p3a / p3b) + plot_annotation(tag_levels = "a")
+print(p3)
+SAVED_FIGURES <- c(SAVED_FIGURES, save_figure(p3, "FIGURE_3", FIG_HEIGHT_MM[["FIGURE_3"]]))
+```
+
+```{r chunk-13-fig3-caption, results='asis', echo=FALSE}
+# 13. Figure 3 caption
+print_caption("Figure", 3, paste(
+  "Recorded diameters of the 2,526 Tairona terraces. (a) Number of terraces by diameter, with",
+  "the median marked by the dashed red line. (b) Empirical cumulative distribution, with the",
+  "interquartile range shaded and the median dashed."))
+heading("Figure 3. Numerical description", 4L)
+```
+
+```{r chunk-14-fig3-report}
+# 14. Figure 3 report
+report_start("Figure 3", "Distribution of recorded terrace diameters",
+             paste("panel a terraces by diameter, panel b empirical cumulative distribution,",
+                   "dashed line median, shaded band interquartile range"))
+emit_rows(N = n, MEAN_M = diam_summary$Mean, SD_M = diam_summary$SD,
+          MEDIAN_M = diam_summary$Median, IQR_M = interval_text(diam_summary$Q1, diam_summary$Q3),
+          MAD_M = diam_summary$MAD, RANGE_M = interval_text(diam_summary$Min, diam_summary$Max),
+          P05_P95_M = interval_text(diam_summary$P05, diam_summary$P95),
+          CV_PERCENT = diam_summary$CV, GINI_DIAMETER = diam_summary$Gini_D,
+          GINI_AREA = diam_summary$Gini_area)
+emit_rows(DIAMETER_M = vector_text(diam_freq$Diameter_m), TERRACES = vector_text(diam_freq$Terraces))
+emit_text("RESULT", paste0(fmt_num(100 * diam_summary$Share_typical, 4), " percent of terraces ",
+                           "measure ", TYPICAL_DIAMETER_M[1], " to ", TYPICAL_DIAMETER_M[2], " m"))
+```
+
+```{r chunk-15-heading-fig4, results='asis', echo=FALSE}
+# 15. Heading Figure 4
+heading("Figure 4. Spatial patterns of terrace size and local context", 2L)
+```
+
+```{r chunk-16-distances}
+# 16. Pairwise distances and close pairs
+DM <- as.matrix(stats::dist(xy_local))
+diag(DM) <- Inf
+nn_dist <- DM[cbind(seq_len(n), max.col(-DM, ties.method = "first"))]
+GAP <- DM - outer(D, D, "+") / 2
+min_gap <- GAP[cbind(seq_len(n), max.col(-GAP, ties.method = "first"))]
+overlap_pairs <- sum(GAP[upper.tri(GAP)] < 0)
+rm(GAP)
+close_audit <- do.call(rbind, lapply(c(2, 5, 10), function(r) {
+  ij <- which(upper.tri(DM) & DM < r, arr.ind = TRUE)
+  data.frame(Threshold_m = r, Pairs = nrow(ij), Terraces = length(unique(as.vector(ij))))
+}))
+close2 <- which(upper.tri(DM) & DM < CLOSE_LIMIT_M, arr.ind = TRUE)
+component <- seq_len(n)
+for (k in seq_len(nrow(close2))) {
+  a <- component[close2[k, 1]]
+  b <- component[close2[k, 2]]
+  if (a != b) component[component == b] <- a
+}
+close_vertices <- sort(unique(as.vector(close2)))
+close_groups <- split(close_vertices, component[close_vertices])
+close_keep <- vapply(close_groups, min, integer(1))
+keep_no_close <- setdiff(seq_len(n), close_vertices)
+keep_one_close <- setdiff(seq_len(n), setdiff(close_vertices, close_keep))
+```
+
+```{r chunk-17-concentration}
+# 17. Local concentration
+concentration <- function(radius) {
+  count <- rowSums(DM <= radius)
+  area <- rep(pi * radius^2, n)
+  e <- which(edge_m < radius)
+  if (length(e)) {
+    buffers <- sf::st_buffer(sf::st_geometry(architecture[e, ]), radius, nQuadSegs = 60)
+    for (k in seq_along(e)) {
+      area[e[k]] <- sum(as.numeric(sf::st_area(suppressWarnings(
+        sf::st_intersection(buffers[k], survey_union)))))
+    }
+  }
+  if (any(!is.finite(area) | area <= 0)) stop("Invalid neighborhood area")
+  data.frame(Radius_m = radius, Count = count, Area_ha = area / 1e4,
+             Concentration = count / (area / 1e4))
+}
+conc <- setNames(lapply(CONCENTRATION_RADII_M, concentration), as.character(CONCENTRATION_RADII_M))
+conc_audit <- do.call(rbind, lapply(conc, function(z) {
+  data.frame(Radius_m = z$Radius_m[1], Median_count = stats::median(z$Count),
+             P25 = qv(z$Concentration, .25), P75 = qv(z$Concentration, .75))
+}))
+primary <- conc[[as.character(PRIMARY_RADIUS_M)]]
+```
+
+```{r chunk-18-fig4-compute}
+# 18. Figure 4 compute
+win_sf <- sf::st_sf(geometry = survey_union)
+region_hulls <- do.call(rbind, lapply(seq_len(LOO_REGIONS), function(g) {
+  pts <- as.matrix(terraces[regions == g, c("X", "Y")])
+  h <- grDevices::chull(pts)
+  data.frame(Region = g, X = pts[h, 1], Y = pts[h, 2])
+}))
+region_labels <- data.frame(Region = seq_len(LOO_REGIONS),
+                            X = as.numeric(tapply(terraces$X, regions, mean)),
+                            Y = as.numeric(tapply(terraces$Y, regions, mean)))
+diam_labels <- c(paste(fmt_num(min(D)), "to 7"), "8 to 9", "10 to 11", "12 to 13",
+                 paste("14 to", fmt_num(max(D))))
+map_pts <- data.frame(X = terraces$X, Y = terraces$Y, Diameter_m = D,
+                      Class = cut(D, breaks = c(-Inf, 7, 9, 11, 13, Inf), labels = diam_labels),
+                      Concentration = primary$Concentration, Region = regions)
+log_d <- log(D)
+near_matrix <- (DM < NEAR_MAX_M) * 1
+near_n <- rowSums(near_matrix)
+near_sq <- pmax(near_n * log_d^2 - 2 * log_d * as.numeric(near_matrix %*% log_d) +
+                  as.numeric(near_matrix %*% log_d^2), 0)
+rm(near_matrix)
+all_sq <- (n - 1) * log_d^2 - 2 * log_d * (sum(log_d) - log_d) + (sum(log_d^2) - log_d^2)
+if (any(!is.finite(all_sq) | all_sq <= 0)) stop("Invalid local variogram normalization")
+map_pts$Neighbors <- near_n
+map_pts$Local_vario <- ifelse(near_n > 0, (near_sq / pmax(near_n, 1)) / (all_sq / (n - 1)),
+                              NA_real_)
+map_pts$Local_shown <- ifelse(near_n >= MIN_LOCAL_NEIGHBORS, map_pts$Local_vario, NA_real_)
+if (USE_DEM) {
+  slope_masked <- terra::mask(ras[["slope"]], terra::vect(win_sf))
+  rdf <- terra::as.data.frame(slope_masked, xy = TRUE, na.rm = TRUE)
+  map_raster <- data.frame(X = rdf[[1]], Y = rdf[[2]], Value = rdf[[3]])
+  raster_title <- paste0("Slope at ", DEM_SCALE_M, " m context (degrees)")
+  MAP_D_TEXT <- paste0("Terrain slope at ", DEM_SCALE_M, " m context.")
+} else {
+  im_k <- spatstat.explore::density.ppp(Xpp, sigma = PCF_SIGMA_M, edge = TRUE, dimyx = 256)
+  idf <- as.data.frame(im_k)
+  idf <- idf[is.finite(idf$value), ]
+  map_raster <- data.frame(X = idf$x + origin[1], Y = idf$y + origin[2], Value = idf$value * 1e6)
+  raster_title <- paste0("Kernel intensity, bandwidth ", PCF_SIGMA_M, " m (terraces per km2)")
+  MAP_D_TEXT <- paste0("Kernel intensity at a ", PCF_SIGMA_M, " m bandwidth.")
+}
+if (!nrow(map_raster) || any(!is.finite(map_raster$Value))) stop("Invalid map raster")
+map_xlim <- as.numeric(bb[c("xmin", "xmax")])
+map_ylim <- as.numeric(bb[c("ymin", "ymax")])
+map_ylim[1] <- map_ylim[1] - 0.2 * diff(map_ylim)
+map_layers <- function() {
+  list(geom_polygon(data = region_hulls, aes(X, Y, group = Region), fill = NA,
+                    colour = "grey30", linewidth = 0.25, linetype = "dashed", inherit.aes = FALSE),
+       geom_sf(data = win_sf, fill = NA, colour = "black", linewidth = 0.35, inherit.aes = FALSE),
+       geom_point(data = region_labels, aes(X, Y), shape = 21, fill = "white",
+                  colour = "black", size = 3.4, stroke = 0.25, inherit.aes = FALSE),
+       geom_text(data = region_labels, aes(X, Y, label = Region), size = 2.3,
+                 fontface = "bold", colour = "black", inherit.aes = FALSE),
+       ggspatial::annotation_scale(location = "bl", width_hint = 0.4, text_cex = 0.6,
+                                   height = grid::unit(0.18, "cm")),
+       ggspatial::annotation_north_arrow(location = "bl", which_north = "true",
+                                         pad_x = grid::unit(0.0, "in"),
+                                         pad_y = grid::unit(0.2, "in"),
+                                         height = grid::unit(0.9, "cm"),
+                                         width = grid::unit(0.9, "cm"),
+                                         style = ggspatial::north_arrow_fancy_orienteering),
+       coord_sf(crs = sf::st_crs(EXPECTED_CRS), xlim = map_xlim, ylim = map_ylim, datum = NA),
+       theme_v7(),
+       theme(axis.title = element_blank(), axis.text = element_blank(),
+             axis.ticks = element_blank(), panel.border = element_blank(),
+             panel.grid = element_blank(), panel.background = element_blank(),
+             legend.key.width = grid::unit(7, "mm"), legend.key.height = grid::unit(2.6, "mm")))
+}
+class_order <- order(match(as.character(map_pts$Class), levels(map_pts$Class)[c(3, 2, 4, 1, 5)]))
+```
+
+```{r chunk-19-fig4-plot, fig.height=210 / 25.4}
+# 19. Figure 4 plot
+p4a <- ggplot(map_pts[class_order, ], aes(X, Y)) +
+  geom_point(aes(colour = Class), size = 0.45, shape = 16) +
+  scale_colour_viridis_d(option = "viridis", end = 0.92, drop = FALSE,
+                         name = "Recorded diameter (m)") +
+  guides(colour = guide_legend(nrow = 1, override.aes = list(size = 2.2))) +
+  map_layers()
+p4b <- ggplot(map_pts[order(map_pts$Concentration), ], aes(X, Y)) +
+  geom_point(aes(colour = Concentration), size = 0.45, shape = 16) +
+  scale_colour_viridis_c(option = "magma", end = 0.92, transform = "log1p",
+                         breaks = c(0, 1, 2, 5, 10),
+                         name = paste0("Other terraces per hectare within ", PRIMARY_RADIUS_M,
+                                       " m")) +
+  map_layers()
+p4c <- ggplot(map_pts[order(!is.na(map_pts$Local_shown), abs(map_pts$Local_shown - 1)), ],
+              aes(X, Y)) +
+  geom_point(aes(colour = Local_shown), size = 0.45, shape = 16) +
+  scale_colour_gradient2(low = "#2166AC", mid = "grey85", high = "#B2182B", midpoint = 1,
+                         limits = c(0, 2), oob = scales::squish, na.value = "grey60",
+                         name = paste0("Local variogram ratio of log diameter, pairs under ",
+                                       NEAR_MAX_M, " m")) +
+  map_layers()
+p4d <- ggplot(map_raster, aes(X, Y)) +
+  geom_raster(aes(fill = Value)) +
+  geom_point(data = map_pts, aes(X, Y), size = 0.1, shape = 16, colour = "#08306B",
+             inherit.aes = FALSE) +
+  scale_fill_distiller(palette = "YlOrBr", direction = 1, name = raster_title) +
+  map_layers()
+p4 <- (p4a | p4b) / (p4c | p4d) + plot_annotation(tag_levels = "a")
+print(p4)
+SAVED_FIGURES <- c(SAVED_FIGURES, save_figure(p4, "FIGURE_4", FIG_HEIGHT_MM[["FIGURE_4"]]))
+```
+
+```{r chunk-20-fig4-caption, results='asis', echo=FALSE}
+# 20. Figure 4 caption
+print_caption("Figure", 4, paste(
+  "Terrace size and local context. (a) Recorded diameter by class. (b) Other terraces per",
+  "hectare within", PRIMARY_RADIUS_M, "m. (c) Local variogram of log diameter for pairs under",
+  NEAR_MAX_M, "m divided by its value for all other terraces; below 1, neighbors more alike;",
+  "grey, fewer than", MIN_LOCAL_NEIGHBORS, "neighbors. (d)", MAP_D_TEXT,
+  "Dashed outlines, analytical labeling regions."))
+heading("Figure 4. Numerical description", 4L)
+```
+
+```{r chunk-21-fig4-report}
+# 21. Figure 4 report
+report_start("Figure 4", "Spatial patterns of terrace size and local context",
+             paste("panel a diameter class, panel b other terraces per hectare within 100 m,",
+                   "panel c local variogram ratio of log diameter for pairs under 50 m, panel d",
+                   "terrain slope or kernel intensity, dashed outlines labeling regions"))
+emit_rows(DIAMETER_CLASS_M = levels(map_pts$Class), TERRACES = as.integer(table(map_pts$Class)))
+lv <- map_pts$Local_shown[is.finite(map_pts$Local_shown)]
+emit_rows(NEAR_RANGE_M = paste0("0-", NEAR_MAX_M), MIN_NEIGHBORS_SHOWN = MIN_LOCAL_NEIGHBORS,
+          WITH_ANY_NEIGHBOR = sum(near_n > 0), SHOWN = length(lv))
+emit_rows(MEDIAN_LOCAL_RATIO = stats::median(lv), MEAN_LOCAL_RATIO = mean(lv),
+          SHARE_BELOW_1 = mean(lv < 1), SHARE_ZERO = mean(lv == 0), SHARE_ABOVE_2 = mean(lv > 2),
+          P05_P95 = interval_text(qv(lv, .05), qv(lv, .95), 3))
+emit_rows(REGION = seq_len(LOO_REGIONS), TERRACES = tabulate(regions, LOO_REGIONS),
+          MEDIAN_DIAMETER_M = as.numeric(tapply(D, regions, stats::median)),
+          MEDIAN_CONCENTRATION_PER_HA = as.numeric(tapply(primary$Concentration, regions,
+                                                          stats::median)),
+          SHOWN = as.numeric(tapply(is.finite(map_pts$Local_shown), regions, sum)),
+          MEDIAN_LOCAL_RATIO = as.numeric(tapply(map_pts$Local_shown, regions, stats::median,
+                                                 na.rm = TRUE)),
+          SHARE_BELOW_1 = as.numeric(tapply(map_pts$Local_shown < 1, regions, mean,
+                                            na.rm = TRUE)))
+if (USE_DEM) {
+  emit_rows(SLOPE_AT_TERRACES_MEDIAN_DEG = stats::median(terrain_raw$slope),
+            SLOPE_AT_TERRACES_P05_P95 = interval_text(qv(terrain_raw$slope, .05),
+                                                      qv(terrain_raw$slope, .95), 3),
+            SLOPE_IN_WINDOW_P05_P95 = interval_text(qv(map_raster$Value, .05),
+                                                    qv(map_raster$Value, .95), 3))
+}
+emit_text("NOTE", paste("Maps are drawn in EPSG:", EXPECTED_CRS, "without coordinate labels, with",
+                        "true north and a scale bar. Local ratios follow the normalization of the",
+                        "local mark variogram of Eckardt and Moradi (2026), averaged over pairs",
+                        "under 50 m; they are descriptive and are not tested individually"))
+```
+
+```{r chunk-22-heading-fig5, results='asis', echo=FALSE}
+# 22. Heading Figure 5
+heading("Figure 5. Spacing and multiscale aggregation", 2L)
+```
+
+```{r chunk-23-fig5-pcf}
+# 23. Figure 5 pcf
+make_envelope <- function(obs, sims, x, label) {
+  stopifnot(length(obs) == length(x), ncol(sims) == length(x), all(is.finite(obs)),
+            all(is.finite(sims)))
+  cs <- GET::create_curve_set(list(r = x, obs = obs, sim_m = t(sims)))
+  e <- GET::global_envelope_test(cs, type = "erl", alternative = "two.sided", alpha = ALPHA)
+  p <- as.numeric(attr(e, "p"))
+  if (length(p) != 1L || !is.finite(p)) stop("Global envelope p value unavailable for ", label)
+  data.frame(Test = label, Distance_m = x, Observed = as.numeric(e$obs),
+             Reference = as.numeric(e$central), Low = as.numeric(e$lo), High = as.numeric(e$hi),
+             P_global = p, B = nrow(sims), Outside = obs < e$lo | obs > e$hi)
+}
+pcf_curve <- function(P, sigma, bw, r, correction, zero = "convolution") {
+  lam <- spatstat.explore::density.ppp(P, sigma = sigma, at = "points", edge = TRUE,
+                                       leaveoneout = TRUE)
+  lam <- pmax(as.numeric(lam), P$n / spatstat.geom::area.owin(P$window) * 1e-4)
+  f <- spatstat.explore::pcfinhom(P, lambda = lam, r = r, bw = bw, correction = correction,
+                                  divisor = "d", kernel = "epanechnikov", zerocor = zero,
+                                  adaptive = FALSE, renormalise = TRUE, normpower = 2)
+  z <- if (correction == "translate") f$trans else f$iso
+  if (length(z) != length(r) || any(!is.finite(z[-1L]))) stop("Invalid PCF estimate")
+  as.numeric(z[-1L])
+}
+environment(pcf_curve) <- baseenv()
+fit_intensity <- function(P, sigma) {
+  im <- spatstat.explore::density.ppp(P, sigma = sigma, edge = TRUE, dimyx = 256)
+  ok <- is.finite(im$v)
+  im$v[ok] <- pmax(im$v[ok], P$n / spatstat.geom::area.owin(P$window) * 1e-4)
+  im
+}
+environment(fit_intensity) <- baseenv()
+sim_kernel <- function(n, intensity, win) {
+  P <- spatstat.random::rpoint(n, f = intensity, win = win, forcewin = TRUE)
+  if (P$n != n || !identical(P$window$type, win$type) ||
+      abs(spatstat.geom::area.owin(P$window) - spatstat.geom::area.owin(win)) > 1e-6 ||
+      !all(spatstat.geom::inside.owin(P$x, P$y, win))) {
+    stop("Kernel simulation did not retain the observation window")
+  }
+  P
+}
+environment(sim_kernel) <- baseenv()
+pcf_step <- function(k, p) {
+  s <- p$simulate(p$n, p$intensity, p$window)
+  p$curve(s, p$sigma, p$bw, p$r, p$correction, p$zero)
+}
+run_pcf <- function(sigma, bw, correction, B, seed, label, r = PCF_R_M, zero = "convolution") {
+  obs <- pcf_curve(Xpp, sigma, bw, r, correction, zero)
+  sim <- mc_run(B, pcf_step, list(n = n, intensity = fit_intensity(Xpp, sigma), window = W,
+                                  sigma = sigma, bw = bw, r = r, correction = correction,
+                                  zero = zero, curve = pcf_curve, simulate = sim_kernel),
+                seed, label)
+  out <- make_envelope(obs, sim, r[-1L], label)
+  attr(out, "simulation_matrix") <- sim
+  out
+}
+pcf_main <- run_pcf(PCF_SIGMA_M, PCF_BW_M, "translate", N_SIM, SEED + 100000L,
+                    "Broad PCF, kernel intensity")
+cal_step <- function(k, p) {
+  z <- p$simulate(p$n, p$im, p$W)
+  obs <- p$curve(z, p$sigma, p$bw, p$r, "translate")
+  iz <- p$intensity(z, p$sigma)
+  inner <- replicate(p$inner, {
+    zz <- p$simulate(p$n, iz, p$W)
+    p$curve(zz, p$sigma, p$bw, p$r, "translate")
+  })
+  p$score(obs, t(inner))$score
+}
+max_discrepancy <- function(obs, sim) {
+  center <- colMeans(sim)
+  scale <- apply(sim, 2L, stats::sd)
+  scale <- pmax(scale, 1e-8 * pmax(1, abs(center)))
+  if (length(obs) != length(center) || any(!is.finite(c(obs, center, scale)))) {
+    stop("Invalid calibration curves")
+  }
+  list(score = max(abs((obs - center) / scale)), center = center, scale = scale)
+}
+environment(max_discrepancy) <- baseenv()
+pcf_calibrated <- NULL
+calibration <- data.frame(Status = "disabled", Outer = 0L, Inner = 0L, P = NA_real_,
+                          Observed_score = NA_real_, Critical_score = NA_real_)
+if (RUN_CALIBRATION) {
+  obs_cal <- max_discrepancy(pcf_main$Observed,
+                             attr(pcf_main, "simulation_matrix")[seq_len(N_CAL_INNER), ,
+                                                                 drop = FALSE])
+  outer_scores <- as.numeric(mc_run(N_CAL_OUTER, cal_step,
+                                    list(n = n, im = fit_intensity(Xpp, PCF_SIGMA_M), W = W,
+                                         curve = pcf_curve, intensity = fit_intensity,
+                                         sigma = PCF_SIGMA_M, bw = PCF_BW_M, r = PCF_R_M,
+                                         inner = N_CAL_INNER, simulate = sim_kernel,
+                                         score = max_discrepancy),
+                                    SEED + 1800000L, "Broad PCF, nested calibration"))
+  p_cal <- (1 + sum(outer_scores >= obs_cal$score)) / (N_CAL_OUTER + 1)
+  crit_index <- ceiling((N_CAL_OUTER + 1) * (1 - ALPHA))
+  crit <- if (crit_index <= N_CAL_OUTER) sort(outer_scores)[crit_index] else Inf
+  outside_cal <- abs((pcf_main$Observed - obs_cal$center) / obs_cal$scale) > crit
+  if (!identical(p_cal <= ALPHA, any(outside_cal))) {
+    stop("Calibrated p value and envelope disagree")
+  }
+  pcf_calibrated <- data.frame(Test = "Broad PCF, kernel intensity, calibrated",
+                               Distance_m = pcf_main$Distance_m, Observed = pcf_main$Observed,
+                               Reference = obs_cal$center,
+                               Low = obs_cal$center - crit * obs_cal$scale,
+                               High = obs_cal$center + crit * obs_cal$scale, P_global = p_cal,
+                               B = N_CAL_OUTER, Outside = outside_cal)
+  calibration <- data.frame(Status = "nested", Outer = N_CAL_OUTER, Inner = N_CAL_INNER,
+                            P = p_cal, Observed_score = obs_cal$score, Critical_score = crit)
+}
+PCF_FINE_BW_M <- 0.15 / sqrt(n / spatstat.geom::area.owin(W)) / sqrt(5)
+lam_cv <- pmax(as.numeric(spatstat.explore::density.ppp(Xpp, sigma = PCF_SIGMA_M, at = "points",
+                                                        edge = TRUE, leaveoneout = TRUE)),
+               n / spatstat.geom::area.owin(W) * 1e-4)
+bw_cv <- tryCatch(as.numeric(spatstat.explore::bw.pcfinhom(Xpp, lambda = lam_cv,
+                                                           rmax = max(PCF_FINE_R_M),
+                                                           cv.method = "compLik",
+                                                           kernel = "epanechnikov",
+                                                           divisor = "d",
+                                                           zerocor = "convolution"))[1],
+                  error = function(e) NA_real_)
+if (!is.finite(bw_cv) || bw_cv <= 0) bw_cv <- NA_real_
+pcf_fine <- run_pcf(PCF_SIGMA_M, PCF_FINE_BW_M, "translate", N_SIM, SEED + 2600000L,
+                    "Fine PCF, kernel intensity", PCF_FINE_R_M)
+pcf_fine_jf <- run_pcf(PCF_SIGMA_M, PCF_FINE_BW_M, "translate", N_SENS, SEED + 2620000L,
+                       "Fine PCF, Jones-Foster correction", PCF_FINE_R_M, "JonesFoster")
+pcf_fine_cv <- if (is.finite(bw_cv)) {
+  run_pcf(PCF_SIGMA_M, bw_cv, "translate", N_SENS, SEED + 2640000L,
+          "Fine PCF, cross-validated bandwidth", PCF_FINE_R_M)
+} else NULL
+pcf_fine_wide <- run_pcf(PCF_SIGMA_M, 1.5 * PCF_FINE_BW_M, "translate", N_SENS,
+                         SEED + 2660000L, "Fine PCF, 1.5 times bandwidth", PCF_FINE_R_M)
+```
+
+```{r chunk-24-fig5-models}
+# 24. Figure 5 models
+trend <- if (USE_DEM_INTENSITY) ~ elev + slope + tpi else ~ I(x / 1000) + I(y / 1000)
+environment(trend) <- baseenv()
+trend_label <- if (USE_DEM_INTENSITY) "terrain trend" else "coordinate trend"
+model_cov <- if (length(terrain_cov)) terrain_cov else NULL
+fit_poisson <- function(P, tr, cov) spatstat.model::ppm(P, trend = tr, covariates = cov)
+environment(fit_poisson) <- baseenv()
+fit_thomas <- function(P, tr, cov) {
+  spatstat.model::kppm(P, trend = tr, covariates = cov, clusters = "Thomas", statistic = "K")
+}
+environment(fit_thomas) <- baseenv()
+poisson_fit <- fit_poisson(Xpp, trend, model_cov)
+thomas_fit <- tryCatch(fit_thomas(Xpp, trend, model_cov), error = function(e) e)
+model_curve <- function(P, tr, cov, bw, r) {
+  m <- spatstat.model::ppm(P, trend = tr, covariates = cov)
+  z <- spatstat.explore::pcfinhom(P, lambda = m, update = FALSE, leaveoneout = FALSE, r = r,
+                                  bw = bw, correction = "translate", divisor = "d",
+                                  kernel = "epanechnikov", zerocor = "convolution",
+                                  adaptive = FALSE, renormalise = TRUE, normpower = 2)
+  as.numeric(z$trans[-1L])
+}
+environment(model_curve) <- baseenv()
+model_step <- function(k, p) {
+  if (!requireNamespace("spatstat.model", quietly = TRUE)) stop("spatstat.model is unavailable")
+  P <- stats::simulate(p$fit, nsim = 1, drop = TRUE)
+  if (!inherits(P, "ppp")) P <- P[[1L]]
+  p$curve(P, p$trend, p$cov, p$bw, p$r)
+}
+run_model <- function(fit, label, seed, bw = PCF_BW_M, r = PCF_R_M) {
+  sims <- mc_run(N_MODEL, model_step, list(fit = fit, curve = model_curve, trend = trend,
+                                           cov = model_cov, bw = bw, r = r), seed, label)
+  make_envelope(model_curve(Xpp, trend, model_cov, bw, r), sims, r[-1L], label)
+}
+poisson_diag <- run_model(poisson_fit, paste("Broad PCF, Poisson,", trend_label),
+                          SEED + 2100000L)
+thomas_diag <- NULL
+thomas_fine <- NULL
+thomas_par <- NULL
+if (!inherits(thomas_fit, "error")) {
+  thomas_diag <- run_model(thomas_fit, paste("Broad PCF, Thomas,", trend_label), SEED + 2200000L)
+  thomas_fine <- run_model(thomas_fit, paste("Fine PCF, Thomas,", trend_label), SEED + 2680000L,
+                           PCF_FINE_BW_M, PCF_FINE_R_M)
+  cp <- thomas_fit$clustpar
+  if (!is.null(cp)) {
+    parents <- cp[["kappa"]] * spatstat.geom::area.owin(W)
+    thomas_par <- data.frame(Kappa_per_km2 = cp[["kappa"]] * 1e6, Scale_m = cp[["scale"]],
+                             Parents = parents, Mean_cluster_size = n / parents)
+  }
+}
+```
+
+```{r chunk-25-fig5-sensitivity}
+# 25. Figure 5 sensitivity
+pcf_sens <- list(
+  run_pcf(PCF_SIGMA_M / 2, PCF_BW_M, "translate", N_SENS, SEED + 1100000L,
+          "Broad PCF, kernel bandwidth 250 m"),
+  run_pcf(PCF_SIGMA_M * 2, PCF_BW_M, "translate", N_SENS, SEED + 1110000L,
+          "Broad PCF, kernel bandwidth 1000 m"),
+  run_pcf(PCF_SIGMA_M, PCF_BW_M * 2, "translate", N_SENS, SEED + 1120000L,
+          "Broad PCF, pair bandwidth 40 m"),
+  run_pcf(PCF_SIGMA_M, PCF_BW_M, "Ripley", N_SENS, SEED + 1130000L,
+          "Broad PCF, isotropic correction"))
+orientation_stat <- function(P) {
+  cp <- spatstat.geom::closepairs(P, rmax = 500, twice = FALSE, what = "all")
+  ok <- cp$d >= 100
+  a <- (atan2(cp$dy[ok], cp$dx[ok]) * 180 / pi) %% 180
+  v <- tabulate(findInterval(a, seq(0, 180, 30)), 6L)
+  if (!sum(v)) stop("No pairs in the orientation domain")
+  v / sum(v)
+}
+environment(orientation_stat) <- baseenv()
+orientation_step <- function(k, p) p$stat(p$simulate(p$n, p$intensity, p$W))
+ori_sim <- mc_run(N_SENS, orientation_step, list(n = n, intensity = fit_intensity(Xpp, PCF_SIGMA_M),
+                                                 W = W, stat = orientation_stat,
+                                                 simulate = sim_kernel),
+                  SEED + 2500000L, "Pair orientation")
+ori <- make_envelope(orientation_stat(Xpp), ori_sim, seq(15, 165, 30), "Pair orientation")
+```
+
+```{r chunk-26-fig5-plot, fig.height=215 / 25.4}
+# 26. Figure 5 plot
+spacing_df <- rbind(data.frame(Metric = "Center nearest-neighbor distance", Value = nn_dist),
+                    data.frame(Metric = "Minimum circular-equivalent gap", Value = min_gap))
+p5a <- ggplot(spacing_df, aes(Value, colour = Metric)) +
+  annotate("rect", xmin = TYPICAL_DIAMETER_M[1], xmax = TYPICAL_DIAMETER_M[2], ymin = -Inf,
+           ymax = Inf, fill = tint(COL[["regional"]], 0.65)) +
+  geom_vline(xintercept = 0, linetype = "dotted", colour = COL[["neutral"]], linewidth = 0.35) +
+  stat_ecdf(geom = "step", linewidth = 0.65) +
+  scale_colour_manual(values = c("Center nearest-neighbor distance" = COL[["observed"]],
+                                 "Minimum circular-equivalent gap" = COL[["outside"]]),
+                      name = NULL) +
+  scale_x_continuous(breaks = c(0, TYPICAL_DIAMETER_M, 25, 50, 75, 100)) +
+  scale_y_continuous(breaks = seq(0, 1, 0.25), labels = scales::label_number(accuracy = 0.01)) +
+  coord_cartesian(xlim = c(-10, 100)) +
+  labs(x = "Distance or signed gap between terraces (m)", y = "Cumulative proportion") +
+  theme_v7()
+pcf_panel <- function(df) {
+  ggplot(df, aes(Distance_m, Observed)) +
+    geom_ribbon(aes(ymin = Low, ymax = High), fill = tint(COL[["global"]], 0.7)) +
+    geom_hline(yintercept = 1, linetype = "dotted", colour = COL[["neutral"]], linewidth = 0.35) +
+    geom_line(aes(y = Reference), colour = COL[["reference"]], linetype = "dashed",
+              linewidth = 0.4) +
+    geom_line(colour = COL[["observed"]], linewidth = 0.65) +
+    facet_wrap(~ Panel, nrow = 1, scales = "free_y") +
+    labs(x = "Distance between terrace centers (m)", y = "Inhomogeneous pair correlation") +
+    theme_v7()
+}
+with_panel <- function(df, panel) { df$Panel <- panel; df }
+kernel_broad <- if (is.null(pcf_calibrated)) pcf_main else pcf_calibrated
+broad_df <- rbind(with_panel(kernel_broad, if (is.null(pcf_calibrated)) "Kernel intensity" else
+                    "Kernel intensity, calibrated"),
+                  with_panel(poisson_diag, paste("Poisson,", trend_label)),
+                  if (!is.null(thomas_diag)) with_panel(thomas_diag, paste("Thomas,", trend_label)))
+broad_df$Panel <- factor(broad_df$Panel, levels = unique(broad_df$Panel))
+fine_df <- rbind(with_panel(pcf_fine, "Kernel intensity"),
+                 if (!is.null(thomas_fine)) with_panel(thomas_fine, paste("Thomas,", trend_label)))
+fine_df$Panel <- factor(fine_df$Panel, levels = unique(fine_df$Panel))
+p5 <- (p5a / pcf_panel(broad_df) / pcf_panel(fine_df)) +
+  plot_layout(heights = c(0.9, 1, 1)) + plot_annotation(tag_levels = "a")
+print(p5)
+SAVED_FIGURES <- c(SAVED_FIGURES, save_figure(p5, "FIGURE_5", FIG_HEIGHT_MM[["FIGURE_5"]]))
+```
+
+```{r chunk-27-fig5-caption, results='asis', echo=FALSE}
+# 27. Figure 5 caption
+print_caption("Figure", 5, paste(
+  "Spacing and aggregation of terrace centers. (a) Cumulative distributions of nearest-neighbor",
+  "distance and minimum circular-equivalent gap; shading marks 8 to 13 m. (b) Inhomogeneous pair",
+  "correlation function to 1 km under kernel, Poisson and Thomas references. (c) Fine-scale",
+  "estimate to 100 m. Shaded areas are 95% global envelopes and dashed lines simulation means."))
+heading("Figure 5. Numerical description", 4L)
+```
+
+```{r chunk-28-fig5-report}
+# 28. Figure 5 report
+report_start("Figure 5", "Spacing and multiscale aggregation of terrace centers",
+             paste("panel a cumulative distributions of nearest-neighbor distance and minimum",
+                   "gap, panels b and c observed pair correlation, 95 percent global envelope",
+                   "and simulation mean"))
+emit_rows(MIN_NN_M = min(nn_dist), P10_NN_M = qv(nn_dist, .10), MEDIAN_NN_M = stats::median(nn_dist),
+          P90_NN_M = qv(nn_dist, .90), MEDIAN_MIN_GAP_M = stats::median(min_gap),
+          NEGATIVE_GAP_TERRACES = sum(min_gap < 0), OVERLAPPING_PAIRS = overlap_pairs)
+emit_rows(CLOSE_PAIRS_UNDER_M = close_audit$Threshold_m, PAIRS = close_audit$Pairs,
+          TERRACES = close_audit$Terraces)
+emit_rows(GROUPS_UNDER_2_M = length(close_groups), TERRACES_IN_GROUPS = length(close_vertices),
+          N_WITHOUT_GROUPS = length(keep_no_close), N_ONE_PER_GROUP = length(keep_one_close))
+emit_rows(BROAD_BW_M = PCF_BW_M, BROAD_HALFWIDTH_M = sqrt(5) * PCF_BW_M,
+          FINE_BW_M = PCF_FINE_BW_M, FINE_HALFWIDTH_M = sqrt(5) * PCF_FINE_BW_M,
+          CV_BW_M = bw_cv, KERNEL_SIGMA_M = PCF_SIGMA_M)
+emit_rows(CALIBRATION = calibration$Status, OUTER = calibration$Outer, INNER = calibration$Inner,
+          P_CALIBRATED = fmt_p(calibration$P), OBSERVED_SCORE = calibration$Observed_score,
+          CRITICAL_SCORE = calibration$Critical_score)
+broad_tests <- Filter(Negate(is.null), list(pcf_calibrated, pcf_main, poisson_diag, thomas_diag))
+emit_rows(BROAD_TEST = vapply(broad_tests, function(e) e$Test[1], character(1)),
+          P = fmt_p(vapply(broad_tests, function(e) e$P_global[1], numeric(1))),
+          B = vapply(broad_tests, function(e) e$B[1], numeric(1)),
+          OUTSIDE_M = vapply(broad_tests, function(e) outside_runs(e$Distance_m, e$Outside),
+                             character(1)),
+          G_AT_20_100_200_M = vapply(broad_tests, function(e) vector_text(value_at(e, c(20, 100, 200)),
+                                                                          4), character(1)))
+fine_tests <- Filter(Negate(is.null), list(pcf_fine, pcf_fine_jf, pcf_fine_cv, pcf_fine_wide,
+                                           thomas_fine))
+emit_rows(FINE_TEST = vapply(fine_tests, function(e) e$Test[1], character(1)),
+          P = fmt_p(vapply(fine_tests, function(e) e$P_global[1], numeric(1))),
+          B = vapply(fine_tests, function(e) e$B[1], numeric(1)),
+          OUTSIDE_M = vapply(fine_tests, function(e) outside_runs(e$Distance_m, e$Outside),
+                             character(1)),
+          G_AT_5_25_50_100_M = vapply(fine_tests, function(e) vector_text(value_at(e, c(5, 25, 50,
+                                                                                      100)), 4),
+                                      character(1)))
+if (!is.null(thomas_par)) {
+  emit_rows(THOMAS_KAPPA_PER_KM2 = thomas_par$Kappa_per_km2, THOMAS_SCALE_M = thomas_par$Scale_m,
+            EXPECTED_PARENTS = thomas_par$Parents, MEAN_CLUSTER_SIZE = thomas_par$Mean_cluster_size)
+}
+if (!is.null(thomas_fine)) {
+  emit_text("RESULT", paste0("The fine-scale pair correlation exceeds the Thomas reference at ",
+                             outside_runs(thomas_fine$Distance_m, thomas_fine$Outside), " m (p = ",
+                             fmt_p(thomas_fine$P_global[1]), ")"))
+}
+emit_text("NOTE", paste("Only the broad kernel test is calibrated; Poisson, Thomas and fine-scale",
+                        "envelopes are approximate fitted-null diagnostics"))
+emit_rows(PCF_TEST = vapply(pcf_sens, function(e) e$Test[1], character(1)),
+          P = fmt_p(vapply(pcf_sens, function(e) e$P_global[1], numeric(1))),
+          OUTSIDE_M = vapply(pcf_sens, function(e) outside_runs(e$Distance_m, e$Outside),
+                             character(1)),
+          G_AT_20_100_M = vapply(pcf_sens, function(e) vector_text(value_at(e, c(20, 100)), 4),
+                                 character(1)))
+emit_rows(SECTOR_DEG = paste0(seq(0, 150, 30), "-", seq(30, 180, 30)),
+          SHARE = fmt_num(ori$Observed, 3), REFERENCE = fmt_num(ori$Reference, 3),
+          ENVELOPE_95 = interval_text(ori$Low, ori$High, 3))
+emit_rows(ORIENTATION_P = fmt_p(ori$P_global[1]))
+emit_text("NOTE", paste("Pair orientations refer to center-to-center directions between 100 and",
+                        "500 m, not to the orientation of individual terraces"))
+```
+
+```{r chunk-29-heading-fig6, results='asis', echo=FALSE}
+# 29. Heading Figure 6
+heading("Figure 6. Distance-dependent similarity of terrace diameters", 2L)
+```
+
+```{r chunk-30-fig6-functions}
+# 30. Figure 6 functions
+make_pairs <- function(keep = seq_len(n), breaks = MARK_BREAKS_M, correction = "none",
+                       lower = 0) {
+  sub <- DM[keep, keep, drop = FALSE]
+  ij <- which(upper.tri(sub) & sub <= max(breaks) & sub >= lower, arr.ind = TRUE)
+  i <- ij[, 1]; j <- ij[, 2]; ds <- sub[ij]
+  b <- findInterval(ds, breaks, rightmost.closed = TRUE)
+  valid <- b >= 1L & b < length(breaks)
+  i <- i[valid]; j <- j[valid]; ds <- ds[valid]; b <- b[valid]
+  w <- rep(1, length(b))
+  if (correction == "border") {
+    w <- (as.numeric(edge_m[keep[i]] >= breaks[b + 1L]) +
+            as.numeric(edge_m[keep[j]] >= breaks[b + 1L])) / 2
+  }
+  counts <- vapply(seq_len(length(breaks) - 1L), function(g) sum(b == g & w > 0), integer(1))
+  vertices <- vapply(seq_len(length(breaks) - 1L), function(g) {
+    at <- b == g & w > 0
+    length(unique(c(i[at], j[at])))
+  }, integer(1))
+  support <- data.frame(Band = seq_along(counts), Lower_m = breaks[-length(breaks)],
+                        Upper_m = breaks[-1L], Pairs = counts, Terraces = vertices)
+  support$Used <- counts >= MIN_PAIRS_PER_BAND & vertices >= MIN_TERRACES_PER_BAND
+  if (sum(support$Used) < 2L) stop("Fewer than two supported distance bands")
+  ok <- w > 0 & b %in% support$Band[support$Used]
+  i <- i[ok]; j <- j[ok]; ds <- ds[ok]; b <- b[ok]; w <- w[ok]
+  o <- order(b)
+  i <- i[o]; j <- j[o]; b <- b[o]; w <- w[o]; ds <- ds[o]
+  meta <- support[support$Used, ]
+  meta$Midpoint_m <- (meta$Lower_m + meta$Upper_m) / 2
+  if (lower > FIXED_DOMAIN_M[1]) stop("The fixed domain conflicts with the lower distance cutoff")
+  fi <- which(upper.tri(sub) & sub >= FIXED_DOMAIN_M[1] & sub <= FIXED_DOMAIN_M[2], arr.ind = TRUE)
+  fw <- rep(1, nrow(fi))
+  if (correction == "border") {
+    fw <- (as.numeric(edge_m[keep[fi[, 1]]] >= FIXED_DOMAIN_M[2]) +
+             as.numeric(edge_m[keep[fi[, 2]]] >= FIXED_DOMAIN_M[2])) / 2
+  }
+  good <- fw > 0
+  ni <- which(upper.tri(sub) & sub >= max(0, lower) & sub < NEAR_MAX_M, arr.ind = TRUE)
+  nw <- rep(1, nrow(ni))
+  if (correction == "border") {
+    nw <- (as.numeric(edge_m[keep[ni[, 1]]] >= NEAR_MAX_M) +
+             as.numeric(edge_m[keep[ni[, 2]]] >= NEAR_MAX_M)) / 2
+  }
+  ng <- nw > 0
+  list(near_i = ni[ng, 1], near_j = ni[ng, 2], near_w = nw[ng], near_lower = lower,
+       i = i, j = j, w = w, b = b, den = as.numeric(rowsum(w, b, reorder = FALSE)),
+       meta = meta, support = support, keep = keep,
+       fi = fi[good, 1], fj = fi[good, 2], fw = fw[good])
+}
+mark_stats <- function(d, pair) {
+  m <- log(d); a <- pair$i; b <- pair$j
+  v <- stats::var(m); mu <- mean(d)
+  product_ref <- (sum(d)^2 - sum(d^2)) / (length(d) * (length(d) - 1))
+  z <- cbind((m[a] - m[b])^2 / (2 * v), (d[a] + d[b]) / (2 * mu), d[a] * d[b] / product_ref)
+  old <- rowsum(z * pair$w, pair$b, reorder = FALSE) / pair$den
+  mom <- rowsum(cbind((m[a] + m[b]) / 2, (m[a]^2 + m[b]^2) / 2, m[a] * m[b]) * pair$w,
+                pair$b, reorder = FALSE) / pair$den
+  center <- mom[, 1]
+  V <- (mom[, 2] - center^2) / v
+  C <- (mom[, 3] - center^2) / v
+  if (max(abs(old[, 1] - (V - C))) > 1e-9) stop("Variogram identity failed")
+  as.numeric(cbind(old, center, V, C))
+}
+environment(mark_stats) <- baseenv()
+mark_step <- function(k, p) {
+  d <- p$d
+  for (g in p$groups) d[g] <- p$d[g[sample.int(length(g))]]
+  z <- p$stat(d, p$pair)
+  ov <- sum(p$close_dist < (d[p$close_i] + d[p$close_j]) / 2)
+  fixed <- sum(p$pair$fw * (log(d[p$pair$fi]) - log(d[p$pair$fj]))^2) /
+    (2 * stats::var(log(d)) * sum(p$pair$fw))
+  near <- if (length(p$pair$near_w)) {
+    sum(p$pair$near_w * (log(d[p$pair$near_i]) - log(d[p$pair$near_j]))^2) /
+      (2 * stats::var(log(d)) * sum(p$pair$near_w))
+  } else 0
+  same <- vapply(p$equal_pairs, function(q) sum(d[q[, 1]] == d[q[, 2]]), numeric(1))
+  c(z, fixed, near, ov, same)
+}
+run_marks <- function(pair, B, seed, label, restricted = FALSE) {
+  d <- D[pair$keep]
+  groups <- if (restricted) split(seq_along(d), regions[pair$keep]) else list(seq_along(d))
+  dm <- DM[pair$keep, pair$keep, drop = FALSE]
+  close <- which(upper.tri(dm) & dm < max(d), arr.ind = TRUE)
+  eq <- lapply(list(c(0, 1), c(0, 2), c(2, 5)), function(r)
+    which(upper.tri(dm) & dm >= r[1] & dm < r[2], arr.ind = TRUE))
+  p <- list(d = d, pair = pair, stat = mark_stats, groups = groups, close_i = close[, 1],
+            close_j = close[, 2], close_dist = dm[close], equal_pairs = eq)
+  obs <- mark_stats(d, pair)
+  sims <- mc_run(B, mark_step, p, seed, label)
+  meta <- pair$meta
+  K <- nrow(meta)
+  blk <- function(k) (k - 1L) * K + seq_len(K)
+  shape <- function(e, fun) {
+    e$Distance_m <- rep(meta$Midpoint_m, length(fun))
+    e$Band <- rep(seq_len(K), length(fun))
+    e$Lower_m <- rep(meta$Lower_m, length(fun))
+    e$Upper_m <- rep(meta$Upper_m, length(fun))
+    e$Function <- rep(fun, each = K)
+    e
+  }
+  joint <- shape(make_envelope(obs[c(blk(1), blk(2))], sims[, c(blk(1), blk(2)), drop = FALSE],
+                               seq_len(2L * K), label), c("Variogram", "Mean diameter"))
+  decomp <- shape(make_envelope(obs[c(blk(5), blk(6))], sims[, c(blk(5), blk(6)), drop = FALSE],
+                                seq_len(2L * K), label),
+                  c("Conditional variance", "Conditional covariance"))
+  product <- make_envelope(obs[blk(3)], sims[, blk(3), drop = FALSE], meta$Midpoint_m, label)
+  identity_error <- max(abs(sims[, blk(1), drop = FALSE] -
+                              (sims[, blk(5), drop = FALSE] - sims[, blk(6), drop = FALSE])))
+  stopifnot(identity_error < 1e-9)
+  rho_sim <- sims[, blk(6), drop = FALSE] / sims[, blk(5), drop = FALSE]
+  rho <- data.frame(Band = seq_len(K), Observed = obs[blk(6)] / obs[blk(5)],
+                    Low = apply(rho_sim, 2, stats::quantile, .025),
+                    High = apply(rho_sim, 2, stats::quantile, .975))
+  eq_obs <- vapply(eq, function(q) sum(d[q[, 1]] == d[q[, 2]]), numeric(1))
+  eq_sim <- sims[, 6L * K + 3L + seq_along(eq), drop = FALSE]
+  equal_marks <- data.frame(Domain = c("0-1 m", "0-2 m", "2-5 m"),
+                            Pairs = vapply(eq, nrow, integer(1)), Identical = eq_obs,
+                            Expected = colMeans(eq_sim),
+                            P_upper = (1 + colSums(eq_sim >= matrix(eq_obs, nrow(eq_sim),
+                                                                    length(eq), byrow = TRUE))) /
+                              (B + 1))
+  ov_obs <- sum(p$close_dist < (d[p$close_i] + d[p$close_j]) / 2)
+  ov_sim <- sims[, 6L * K + 3L]
+  list(curves = joint, decomposition = decomp, product = product, rho = rho,
+       equal_marks = equal_marks, identity_error = identity_error, pair = pair, K = K,
+       log_mean = data.frame(Band = seq_len(K), Observed = obs[blk(4)],
+                             Null = colMeans(sims[, blk(4), drop = FALSE])),
+       overlap = data.frame(Observed = ov_obs, Null_median = stats::median(ov_sim),
+                            Null_low = qv(ov_sim, .025), Null_high = qv(ov_sim, .975),
+                            P = mc_p(ov_obs, ov_sim)),
+       fixed_obs = sum(pair$fw * (log(d[pair$fi]) - log(d[pair$fj]))^2) /
+         (2 * stats::var(log(d)) * sum(pair$fw)),
+       fixed_sim = sims[, 6L * K + 1L], near_sim = sims[, 6L * K + 2L],
+       near_obs = if (length(pair$near_w)) {
+         sum(pair$near_w * (log(d[pair$near_i]) - log(d[pair$near_j]))^2) /
+           (2 * stats::var(log(d)) * sum(pair$near_w))
+       } else NA_real_)
+}
+near_effect <- function(res, label) {
+  sim <- res$near_sim
+  ref <- mean(sim)
+  ok <- length(res$pair$near_w) >= MIN_PAIRS_PER_BAND &&
+    length(unique(c(res$pair$near_i, res$pair$near_j))) >= MIN_TERRACES_PER_BAND &&
+    is.finite(ref) && ref > 0
+  data.frame(Scenario = label, N = length(res$pair$keep), Distance_min_m = res$pair$near_lower,
+             Pairs = length(res$pair$near_w), Supported = ok,
+             Observed_ratio = if (ok) res$near_obs / ref else NA_real_,
+             Null_low_ratio = if (ok) qv(sim, .025) / ref else NA_real_,
+             Null_high_ratio = if (ok) qv(sim, .975) / ref else NA_real_,
+             P_scalar = if (ok) mc_p(res$near_obs, sim) else NA_real_, B = length(sim))
+}
+fixed_effect <- function(res, label) {
+  sim <- res$fixed_sim
+  ref <- mean(sim)
+  data.frame(Scenario = label, Pairs = length(res$pair$fi), Observed_ratio = res$fixed_obs / ref,
+             Null_low_ratio = qv(sim, .025) / ref, Null_high_ratio = qv(sim, .975) / ref)
+}
+mark_long <- function(res, null_label) {
+  out <- rbind(res$curves, res$decomposition)
+  out$Null <- null_label
+  out
+}
+mark_plot <- function(df, max_upper) {
+  df <- df[df$Upper_m <= max_upper, ]
+  meta <- unique(df[, c("Band", "Lower_m", "Upper_m")])
+  meta <- meta[order(meta$Band), ]
+  refs <- data.frame(Function = factor(levels(df$Function), levels = levels(df$Function)),
+                     y = c(1, 1, 1, 0))
+  ggplot(df, aes(Band, Observed)) +
+    geom_ribbon(aes(ymin = Low, ymax = High, fill = Null)) +
+    geom_hline(data = refs, aes(yintercept = y), linetype = "dotted", colour = COL[["neutral"]],
+               linewidth = 0.35) +
+    geom_line(aes(y = Reference), colour = COL[["reference"]], linetype = "dashed",
+              linewidth = 0.4) +
+    geom_line(colour = COL[["observed"]], linewidth = 0.6) +
+    geom_point(aes(colour = Outside), size = 1.7) +
+    facet_grid(Function ~ Null, scales = "free_y") +
+    scale_x_continuous(breaks = meta$Band, labels = band_text(meta)) +
+    scale_fill_manual(values = c("Global labeling" = tint(COL[["global"]], 0.72),
+                                 "Within-region labeling" = tint(COL[["regional"]], 0.68)),
+                      guide = "none") +
+    scale_colour_manual(values = c("FALSE" = COL[["observed"]], "TRUE" = COL[["outside"]]),
+                        labels = c("FALSE" = "Within 95% envelope",
+                                   "TRUE" = "Outside 95% envelope"), name = NULL) +
+    labs(x = "Distance band between terrace centers (m)", y = "Normalized statistic") +
+    theme_v7() +
+    theme(axis.text.x = element_text(angle = 35, hjust = 1))
+}
+```
+
+```{r chunk-31-fig6-compute}
+# 31. Figure 6 compute
+pair_main <- make_pairs()
+mark_global <- run_marks(pair_main, N_PERM, SEED + 200000L, "Marks, global labeling")
+mark_regional <- run_marks(pair_main, N_PERM, SEED + 300000L, "Marks, within-region labeling",
+                           TRUE)
+fig6_df <- rbind(mark_long(mark_global, "Global labeling"),
+                 mark_long(mark_regional, "Within-region labeling"))
+fig6_df$Function <- factor(fig6_df$Function, levels = c("Variogram", "Mean diameter",
+                                                        "Conditional variance",
+                                                        "Conditional covariance"))
+fig6_df$Null <- factor(fig6_df$Null, levels = c("Global labeling", "Within-region labeling"))
+```
+
+```{r chunk-32-fig6-plot, fig.height=225 / 25.4}
+# 32. Figure 6 plot
+p6 <- mark_plot(fig6_df, DISPLAY_MAX_M)
+print(p6)
+SAVED_FIGURES <- c(SAVED_FIGURES, save_figure(p6, "FIGURE_6", FIG_HEIGHT_MM[["FIGURE_6"]]))
+```
+
+```{r chunk-33-fig6-caption, results='asis', echo=FALSE}
+# 33. Figure 6 caption
+print_caption("Figure", 6, paste(
+  "Distance-band statistics under global and within-region random labeling over the 0 to 2 km",
+  "test domain. Rows give the normalized variogram of log diameter, mean diameter of pairs, and",
+  "conditional variance and covariance of log diameter, so the variogram equals variance minus",
+  "covariance. Shaded areas are 95% global envelopes and dashed lines simulation means; orange",
+  "points fall outside."))
+heading("Figure 6. Numerical description", 4L)
+```
+
+```{r chunk-34-fig6-report}
+# 34. Figure 6 report
+report_start("Figure 6", "Distance-dependent similarity of terrace diameters",
+             paste("rows variogram, mean diameter, conditional variance and covariance of log",
+                   "diameter, columns global and within-region labeling, x distance band,",
+                   "shaded 95 percent global envelope, dashed simulation mean"))
+bt <- band_text(pair_main$meta)
+emit_rows(BANDS_M = vector_text(bt), PAIRS = vector_text(pair_main$meta$Pairs),
+          TERRACES = vector_text(pair_main$meta$Terraces))
+for (res in list(list(r = mark_global, l = "Global labeling"),
+                 list(r = mark_regional, l = "Within-region labeling"))) {
+  K <- res$r$K
+  a <- res$r$curves
+  b <- res$r$decomposition
+  emit_rows(NULL_MODEL = res$l, P_VARIOGRAM_AND_MEAN = fmt_p(a$P_global[1]),
+            P_VARIANCE_AND_COVARIANCE = fmt_p(b$P_global[1]), PERMUTATIONS = a$B[1])
+  emit_rows(VARIOGRAM = vector_text(a$Observed[seq_len(K)], 3))
+  emit_rows(VARIOGRAM_LOW = vector_text(a$Low[seq_len(K)], 3),
+            VARIOGRAM_HIGH = vector_text(a$High[seq_len(K)], 3))
+  emit_rows(MEAN_DIAMETER = vector_text(a$Observed[K + seq_len(K)], 4))
+  emit_rows(VARIANCE = vector_text(b$Observed[seq_len(K)], 3))
+  emit_rows(COVARIANCE = vector_text(b$Observed[K + seq_len(K)], 3))
+  emit_rows(COVARIANCE_LOW = vector_text(b$Low[K + seq_len(K)], 3),
+            COVARIANCE_HIGH = vector_text(b$High[K + seq_len(K)], 3))
+  emit_rows(CORRELATION = vector_text(res$r$rho$Observed, 3))
+  emit_text("RESULT", paste0(res$l, ", bands outside the envelope, variogram ",
+                             bands_outside(bt, a$Outside[seq_len(K)]), ", covariance ",
+                             bands_outside(bt, b$Outside[K + seq_len(K)]), ", variance ",
+                             bands_outside(bt, b$Outside[seq_len(K)])))
+}
+emit_rows(GEOMETRIC_MEAN_SHIFT_PERCENT = vector_text(100 * expm1(mark_global$log_mean$Observed -
+                                                                   mark_global$log_mean$Null), 3))
+em <- mark_global$equal_marks
+emit_rows(CLOSE_DOMAIN = em$Domain, PAIRS = em$Pairs, IDENTICAL_DIAMETERS = em$Identical,
+          EXPECTED = em$Expected, P_UPPER = fmt_p(em$P_upper))
+emit_rows(MAX_IDENTITY_ERROR = formatC(max(mark_global$identity_error,
+                                           mark_regional$identity_error),
+                                       format = "e", digits = 2),
+          OVERLAPPING_PAIRS = mark_global$overlap$Observed,
+          OVERLAP_NULL_95 = interval_text(mark_global$overlap$Null_low,
+                                          mark_global$overlap$Null_high),
+          P_OVERLAP = fmt_p(mark_global$overlap$P))
+emit_text("RESULT", paste0("Correlation of neighboring log diameters ",
+                           fmt_num(mark_global$rho$Observed[1], 3), " at ", bt[1], " m and ",
+                           fmt_num(mark_global$rho$Observed[2], 3), " at ", bt[2], " m"))
+emit_text("NOTE", paste("The joint variogram and mean test over 0 to 2 km is the primary global",
+                        "test; variance, covariance and correlation are follow-up statistics on",
+                        "the same permutations"))
+emit_rows(PRODUCT_MARK_P_GLOBAL = fmt_p(mark_global$product$P_global[1]),
+          PRODUCT_MARK_P_REGIONAL = fmt_p(mark_regional$product$P_global[1]))
+emit_text("NOTE", "The figure shows every distance band of the 0 to 2 km test domain")
+```
+
+```{r chunk-35-heading-fig7, results='asis', echo=FALSE}
+# 35. Heading Figure 7
+heading("Figure 7. Terrace diameter, local concentration and residual dependence", 2L)
+```
+
+```{r chunk-36-fig7-regression}
+# 36. Figure 7 regression
+x <- log1p(primary$Concentration)
+y <- log(D)
+if (stats::sd(x) == 0) stop("Concentration has no variation")
+model0 <- stats::lm(y ~ 1)
+model1 <- stats::lm(y ~ x)
+fstat <- summary(model1)$fstatistic
+ols <- data.frame(Intercept = unname(stats::coef(model1)[1]), Slope = unname(stats::coef(model1)[2]),
+                  F = unname(fstat[["value"]]), DF1 = unname(fstat[["numdf"]]),
+                  DF2 = unname(fstat[["dendf"]]),
+                  P = stats::pf(fstat[["value"]], fstat[["numdf"]], fstat[["dendf"]],
+                                lower.tail = FALSE),
+                  R2 = summary(model1)$r.squared)
+block_ids <- function(width, offset = c(0, 0)) {
+  interaction(floor((xy_local[, 1] + offset[1]) / width),
+              floor((xy_local[, 2] + offset[2]) / width), drop = TRUE)
+}
+boot_step <- function(k, p) {
+  chosen <- sample.int(length(p$blocks), length(p$blocks), replace = TRUE)
+  ii <- unlist(p$blocks[chosen], use.names = FALSE)
+  f <- stats::lm.fit(cbind(1, p$x[ii]), p$y[ii])
+  b <- f$coefficients[2]
+  if (!is.finite(b)) return(c(0, 0, 0, 0))
+  c(1, f$coefficients[1], b, 100 * expm1(b * p$dx))
+}
+boot_model <- function(keep, radius, width, B, seed, offset = c(0, 0)) {
+  xx <- log1p(conc[[as.character(radius)]]$Concentration[keep])
+  yy <- y[keep]
+  dx <- diff(qv(xx, c(.25, .75)))
+  blocks <- split(seq_along(keep), droplevels(block_ids(width, offset)[keep]))
+  f <- stats::lm.fit(cbind(1, xx), yy)
+  if (length(blocks) < 3L || !all(is.finite(f$coefficients))) {
+    stop("Insufficient variation for the block bootstrap")
+  }
+  z <- mc_run(B, boot_step, list(blocks = blocks, x = xx, y = yy, dx = dx), seed,
+              paste0("Block bootstrap, radius ", radius, " m, block ", width, " m"))
+  good <- z[, 1] == 1
+  if (mean(good) < 0.99) stop("More than 1 percent of bootstrap fits are singular")
+  z <- z[good, , drop = FALSE]
+  beta <- unname(f$coefficients[2])
+  list(summary = data.frame(Radius_m = radius, Block_m = width, Blocks = length(blocks),
+                            Beta = beta, Beta_low = qv(z[, 3], .025), Beta_high = qv(z[, 3], .975),
+                            Effect = 100 * expm1(beta * dx), Effect_low = qv(z[, 4], .025),
+                            Effect_high = qv(z[, 4], .975)),
+       draws = z, dx = dx)
+}
+boot_main <- boot_model(seq_len(n), PRIMARY_RADIUS_M, BOOT_BLOCK_M, N_BOOT, SEED + 400000L)
+slope_step <- function(k, p) {
+  yy <- p$y
+  for (g in p$groups) yy[g] <- p$y[g[sample.int(length(g))]]
+  sum((p$x - mean(p$x)) * (yy - mean(yy))) / sum((p$x - mean(p$x))^2)
+}
+slope_global <- mc_run(N_PERM, slope_step, list(x = x, y = y, groups = list(seq_len(n))),
+                       SEED + 500000L, "Slope, global labeling")
+slope_regional <- mc_run(N_PERM, slope_step, list(x = x, y = y, groups = split(seq_len(n), regions)),
+                         SEED + 600000L, "Slope, within-region labeling")
+slope_p <- c(Global = mc_p(ols$Slope, slope_global), Regional = mc_p(ols$Slope, slope_regional))
+effect_log <- boot_main$draws[, 3] * boot_main$dx
+contrast <- data.frame(Log_SD = stats::sd(y),
+                       Standardized = ols$Slope * boot_main$dx / stats::sd(y),
+                       Standardized_low = qv(effect_log / stats::sd(y), .025),
+                       Standardized_high = qv(effect_log / stats::sd(y), .975),
+                       Difference_m = 10 * expm1(ols$Slope * boot_main$dx),
+                       Difference_low = qv(10 * expm1(effect_log), .025),
+                       Difference_high = qv(10 * expm1(effect_log), .975))
+xg <- seq(min(x), max(x), length.out = 120)
+pred_draws <- exp(outer(boot_main$draws[, 3], xg, "*") + boot_main$draws[, 2])
+fit_grid <- data.frame(C = expm1(xg), Fit = exp(ols$Intercept + ols$Slope * xg),
+                       Low = apply(pred_draws, 2, stats::quantile, .025),
+                       High = apply(pred_draws, 2, stats::quantile, .975))
+z_std <- stats::rstandard(model1)
+lag_matrix <- DM <= LAG_RADIUS_M
+lag_n <- rowSums(lag_matrix)
+lag_mean <- ifelse(lag_n > 0, as.numeric(lag_matrix %*% z_std) / pmax(lag_n, 1L), NA_real_)
+rm(lag_matrix)
+lag_cor <- stats::cor(z_std, lag_mean, use = "complete.obs")
+```
+
+```{r chunk-37-fig7-validation}
+# 37. Figure 7 validation
+set.seed(SEED + 700000L)
+cv_block <- stats::kmeans(xy_local, centers = CV_BLOCKS, nstart = 25, iter.max = 200)$cluster
+make_partitions <- function() {
+  out <- list()
+  keys <- character()
+  attempt <- 0L
+  while (length(out) < CV_REPEATS && attempt < 1000L) {
+    attempt <- attempt + 1L
+    set.seed(SEED + 710000L + attempt)
+    fd <- sample(rep(seq_len(CV_FOLDS), length.out = CV_BLOCKS))[cv_block]
+    key <- paste(match(fd, unique(fd)), collapse = ",")
+    if (!key %in% keys) {
+      out[[length(out) + 1L]] <- fd
+      keys <- c(keys, key)
+    }
+  }
+  if (length(out) != CV_REPEATS) stop("Distinct spatial partitions could not be built")
+  out
+}
+partitions <- make_partitions()
+cv_step <- function(k, p) {
+  fd <- p$folds[[k]]
+  out <- matrix(NA_real_, length(fd), 2L)
+  min_sep <- Inf
+  for (f in seq_len(p$K)) {
+    te <- which(fd == f)
+    tr0 <- which(fd != f)
+    tr <- tr0[apply(p$dist[tr0, te, drop = FALSE], 1, min) >= p$buffer]
+    if (length(tr) < 30L || length(te) < 1L) stop("Insufficient fold after buffering")
+    for (j in 1:2) {
+      M <- if (j == 1L) p$Z0 else p$Z1
+      m <- stats::lm.fit(M[tr, , drop = FALSE], p$y[tr])
+      if (any(!is.finite(m$coefficients))) stop("Singular cross-validation fit")
+      out[te, j] <- exp(M[te, , drop = FALSE] %*% m$coefficients + stats::median(m$residuals))
+    }
+    min_sep <- min(min_sep, min(p$dist[tr, te, drop = FALSE]))
+  }
+  if (any(!is.finite(out))) stop("Incomplete held-out predictions")
+  mae <- colMeans(abs(exp(p$y) - out))
+  c(mae, mae[1] - mae[2], min_sep)
+}
+run_cv <- function(Z0, Z1, seed, label) {
+  mc_run(CV_REPEATS, cv_step, list(folds = partitions, K = CV_FOLDS, Z0 = Z0, Z1 = Z1, y = y,
+                                   dist = DM, buffer = CV_BUFFER_M), seed, label)
+}
+cv_conc <- run_cv(matrix(1, n, 1), cbind(1, x), SEED + 720000L,
+                  "Cross-validation, concentration")
+resid_stat <- function(z, pair) {
+  v <- stats::var(z)
+  as.numeric(rowsum(pair$w * (z[pair$i] - z[pair$j])^2 / (2 * v), pair$b, reorder = FALSE)) /
+    pair$den
+}
+environment(resid_stat) <- baseenv()
+resid_near_stat <- function(z, pair) {
+  sum(pair$near_w * (z[pair$near_i] - z[pair$near_j])^2) / (2 * stats::var(z) * sum(pair$near_w))
+}
+environment(resid_near_stat) <- baseenv()
+signflip_step <- function(k, p) {
+  ys <- p$fitted + p$adjusted * sample(c(-1, 1), length(p$adjusted), replace = TRUE)
+  f <- stats::lm.fit(p$X, ys)
+  c(p$stat(f$residuals, p$pair), p$near(f$residuals, p$pair))
+}
+run_residual <- function(model, label, seed) {
+  r <- stats::residuals(model)
+  adjusted <- r / sqrt(pmax(1 - stats::hatvalues(model), 1e-6))
+  sims <- mc_run(N_SIM, signflip_step, list(fitted = stats::fitted(model), adjusted = adjusted,
+                                            X = stats::model.matrix(model), stat = resid_stat,
+                                            near = resid_near_stat, pair = pair_main),
+                 seed, paste("Sign-flip residual resampling,", label))
+  K <- nrow(pair_main$meta)
+  curve <- make_envelope(resid_stat(r, pair_main), sims[, seq_len(K), drop = FALSE],
+                         pair_main$meta$Midpoint_m, label)
+  curve$Band <- seq_len(K)
+  curve$Upper_m <- pair_main$meta$Upper_m
+  curve$Model <- label
+  near_obs <- resid_near_stat(r, pair_main)
+  near_sim <- sims[, K + 1L]
+  list(curve = curve,
+       near = data.frame(Model = label, Ratio = near_obs / mean(near_sim),
+                         Null_low = qv(near_sim, .025) / mean(near_sim),
+                         Null_high = qv(near_sim, .975) / mean(near_sim),
+                         P = mc_p(near_obs, near_sim), P_global = curve$P_global[1],
+                         R2 = summary(model)$r.squared))
+}
+res_m1 <- run_residual(model1, "M1 concentration", SEED + 800000L)
+res_m2 <- NULL
+res_m3 <- NULL
+terrain_coef <- NULL
+cv_terrain <- NULL
+if (USE_DEM_MARKS) {
+  tdat <- data.frame(y = y, x = x, terrain_at)
+  model2 <- stats::lm(y ~ elev + slope + tpi, data = tdat)
+  model3 <- stats::lm(y ~ x + elev + slope + tpi, data = tdat)
+  res_m2 <- run_residual(model2, "M2 terrain", SEED + 2700000L)
+  res_m3 <- run_residual(model3, "M3 concentration and terrain", SEED + 2300000L)
+  boot_lm_step <- function(k, p) {
+    chosen <- sample.int(length(p$blocks), length(p$blocks), replace = TRUE)
+    ii <- unlist(p$blocks[chosen], use.names = FALSE)
+    b <- stats::lm.fit(p$X[ii, , drop = FALSE], p$y[ii])$coefficients
+    if (any(!is.finite(b))) return(c(0, rep(0, ncol(p$X))))
+    c(1, b)
+  }
+  boot_coef <- function(model, label, seed) {
+    X <- stats::model.matrix(model)
+    blocks <- split(seq_len(n), droplevels(block_ids(BOOT_BLOCK_M)))
+    z <- mc_run(N_SENS, boot_lm_step, list(blocks = blocks, X = X, y = y), seed,
+                paste("Block bootstrap coefficients,", label))
+    z <- z[z[, 1] == 1, -1, drop = FALSE]
+    data.frame(Model = label, Term = colnames(X), Estimate = unname(stats::coef(model)),
+               Low = apply(z, 2, stats::quantile, .025),
+               High = apply(z, 2, stats::quantile, .975))
+  }
+  terrain_coef <- rbind(boot_coef(model2, "M2 terrain", SEED + 2750000L),
+                        boot_coef(model3, "M3 concentration and terrain", SEED + 2760000L))
+  Zt <- cbind(1, as.matrix(terrain_at))
+  cv_terrain <- run_cv(Zt, cbind(Zt, x), SEED + 2400000L, "Cross-validation, terrain")
+}
+residual_models <- Filter(Negate(is.null), list(res_m1, res_m2, res_m3))
+```
+
+```{r chunk-38-fig7-diagnostics}
+# 38. Figure 7 diagnostics
+pearson_r <- stats::cor(x, y)
+spearman_rs <- stats::cor(x, y, method = "spearman")
+rank_step <- function(k, p) {
+  chosen <- sample.int(length(p$blocks), length(p$blocks), replace = TRUE)
+  ii <- unlist(p$blocks[chosen], use.names = FALSE)
+  stats::cor(p$x[ii], p$y[ii], method = "spearman")
+}
+rank_boot <- mc_run(N_SENS, rank_step,
+                    list(blocks = split(seq_len(n), droplevels(block_ids(BOOT_BLOCK_M))),
+                         x = x, y = y),
+                    SEED + 2800000L, "Block bootstrap, Spearman correlation")
+cooks <- stats::cooks.distance(model1)
+keep_trim <- which(abs(z_std) <= 3)
+trim_model <- boot_model(keep_trim, PRIMARY_RADIUS_M, BOOT_BLOCK_M, N_SENS, SEED + 2810000L)
+spline_basis <- splines::ns(x, df = 3)
+model_spline <- stats::lm(y ~ spline_basis)
+x_central <- seq(qv(x, .05), qv(x, .95), length.out = 100)
+pred_linear <- ols$Intercept + ols$Slope * x_central
+pred_spline <- as.numeric(cbind(1, stats::predict(spline_basis, x_central)) %*%
+                            stats::coef(model_spline))
+spline_test <- stats::anova(model1, model_spline)
+curvature <- data.frame(Delta_AIC = stats::AIC(model_spline) - stats::AIC(model1),
+                        Max_difference_pct = 100 * max(abs(expm1(pred_spline - pred_linear))),
+                        P = spline_test[["Pr(>F)"]][2])
+concentration_quartile <- cut(x, breaks = unique(qv(x, c(0, .25, .5, .75, 1))),
+                              include.lowest = TRUE, labels = FALSE)
+residual_sd_quartile <- as.numeric(tapply(stats::residuals(model1), concentration_quartile,
+                                          stats::sd))
+vif <- NULL
+if (USE_DEM_MARKS) {
+  vif_data <- data.frame(x = x, terrain_at)
+  vif <- vapply(names(vif_data), function(v) {
+    f <- stats::reformulate(setdiff(names(vif_data), v), response = v)
+    1 / (1 - summary(stats::lm(f, data = vif_data))$r.squared)
+  }, numeric(1))
+}
+```
+
+```{r chunk-39-fig7-plot, fig.height=215 / 25.4}
+# 39. Figure 7 plot
+fig7a_df <- data.frame(C = primary$Concentration, D = D, Size = abs(z_std), Lag = lag_mean)
+fig7a_df <- fig7a_df[order(fig7a_df$Size), ]
+lab_eq <- sprintf('ln(italic(D)) == "%.3f" %s "%.4f" %%*%% ln(1 + italic(C))', ols$Intercept,
+                  if (ols$Slope < 0) "-" else "+", abs(ols$Slope))
+lab_p <- if (ols$P < 0.001) 'italic(p) < "0.001"' else sprintf('italic(p) == "%.4f"', ols$P)
+lab_stat <- sprintf('list(italic(F)[list(%d, %d)] == "%.2f", %s, italic(R)^2 == "%.4f")',
+                    as.integer(ols$DF1), as.integer(ols$DF2), ols$F, lab_p, ols$R2)
+p7a <- ggplot() +
+  geom_ribbon(data = fit_grid, aes(x = C, ymin = Low, ymax = High), fill = "grey80") +
+  geom_point(data = fig7a_df, aes(C, D, size = Size, fill = Lag), shape = 21, colour = "black",
+             stroke = 0.12) +
+  geom_line(data = fit_grid, aes(C, Low), colour = "black", linewidth = 0.3, linetype = "dashed") +
+  geom_line(data = fit_grid, aes(C, High), colour = "black", linewidth = 0.3, linetype = "dashed") +
+  geom_line(data = fit_grid, aes(C, Fit), colour = COL[["fit"]], linewidth = 0.9) +
+  annotate("text", x = max(fig7a_df$C), y = c(56, 46), label = c(lab_eq, lab_stat), parse = TRUE,
+           hjust = 1, size = 2.8, colour = "black") +
+  scale_x_continuous(transform = "log1p", breaks = c(0, 1, 2, 5, 10)) +
+  scale_y_log10(breaks = c(3, 5, 8, 10, 13, 20, 30, 40), limits = c(2.8, 64)) +
+  scale_size(range = c(0.3, 3.2), name = "Absolute standardized residual") +
+  scale_fill_viridis_c(option = "plasma", limits = c(-2, 2), oob = scales::squish,
+                       na.value = "grey85",
+                       name = "Mean standardized residual of neighbors within 50 m") +
+  guides(size = guide_legend(override.aes = list(fill = "grey60"))) +
+  labs(x = "Other terraces per hectare within 100 m (log1p scale)",
+       y = "Recorded diameter (m, log scale)") +
+  theme_v7() +
+  theme(legend.key.width = grid::unit(9, "mm"))
+res_df <- do.call(rbind, lapply(residual_models, function(m) m$curve))
+res_df <- res_df[res_df$Upper_m <= DISPLAY_MAX_M, ]
+res_df$Model <- factor(res_df$Model, levels = unique(res_df$Model))
+res_meta <- pair_main$meta[pair_main$meta$Upper_m <= DISPLAY_MAX_M, ]
+res_fill <- setNames(tint(c(COL[["global"]], COL[["regional"]], COL[["reference"]]), 0.7),
+                     c("M1 concentration", "M2 terrain", "M3 concentration and terrain"))
+p7b <- ggplot(res_df, aes(Band, Observed)) +
+  geom_ribbon(aes(ymin = Low, ymax = High, fill = Model)) +
+  geom_hline(yintercept = 1, linetype = "dotted", colour = COL[["neutral"]], linewidth = 0.35) +
+  geom_line(aes(y = Reference), colour = COL[["reference"]], linetype = "dashed",
+            linewidth = 0.4) +
+  geom_line(colour = COL[["observed"]], linewidth = 0.6) +
+  geom_point(aes(colour = Outside), size = 1.7) +
+  facet_wrap(~ Model, nrow = 1) +
+  scale_x_continuous(breaks = seq_len(nrow(res_meta)), labels = band_text(res_meta)) +
+  scale_fill_manual(values = res_fill, guide = "none") +
+  scale_colour_manual(values = c("FALSE" = COL[["observed"]], "TRUE" = COL[["outside"]]),
+                      labels = c("FALSE" = "Within 95% envelope", "TRUE" = "Outside 95% envelope"),
+                      name = NULL) +
+  labs(x = "Distance band between terrace centers (m)", y = "Normalized residual variogram") +
+  theme_v7() +
+  theme(axis.text.x = element_text(angle = 35, hjust = 1))
+p7 <- (p7a / p7b) + plot_layout(heights = c(1.3, 1)) + plot_annotation(tag_levels = "a")
+print(p7)
+SAVED_FIGURES <- c(SAVED_FIGURES, save_figure(p7, "FIGURE_7", FIG_HEIGHT_MM[["FIGURE_7"]]))
+```
+
+```{r chunk-40-fig7-caption, results='asis', echo=FALSE}
+# 40. Figure 7 caption
+print_caption("Figure", 7, paste(
+  "(a) Recorded diameter and other terraces per hectare within 100 m. Red line, least-squares fit",
+  "of log diameter on log(1 + concentration); grey band, 95% spatial block-bootstrap interval;",
+  "point size, absolute standardized residual; color, mean standardized residual of neighbors",
+  "within 50 m. (b) Residual variograms over 0 to 2 km with 95% global envelopes from sign-flip",
+  "residual resampling."))
+heading("Figure 7. Numerical description", 4L)
+```
+
+```{r chunk-41-fig7-report}
+# 41. Figure 7 report
+report_start("Figure 7", "Terrace diameter, local concentration and residual dependence",
+             paste("panel a points terraces, size absolute standardized residual, fill mean",
+                   "standardized residual of neighbors within 50 m, red line least-squares fit,",
+                   "grey band 95 percent block-bootstrap interval, panel b residual variograms",
+                   "with 95 percent sign-flip envelopes"))
+emit_rows(RADIUS_M = conc_audit$Radius_m, MEDIAN_NEIGHBORS = conc_audit$Median_count,
+          CONCENTRATION_P25_P75_PER_HA = interval_text(conc_audit$P25, conc_audit$P75, 3))
+emit_rows(INTERCEPT = ols$Intercept, SLOPE = ols$Slope, F = ols$F,
+          DF = paste0(ols$DF1, ",", ols$DF2), P_OLS = fmt_p(ols$P), R2 = ols$R2,
+          AIC_M0 = stats::AIC(model0), AIC_M1 = stats::AIC(model1))
+emit_rows(SLOPE_95_BLOCK = interval_text(boot_main$summary$Beta_low, boot_main$summary$Beta_high),
+          P_PERMUTATION_GLOBAL = fmt_p(slope_p[["Global"]]),
+          P_PERMUTATION_REGIONAL = fmt_p(slope_p[["Regional"]]),
+          BLOCKS = boot_main$summary$Blocks)
+emit_rows(CONTRAST_PERCENT = boot_main$summary$Effect,
+          CONTRAST_95 = interval_text(boot_main$summary$Effect_low, boot_main$summary$Effect_high, 3),
+          STANDARDIZED_SD = contrast$Standardized,
+          STANDARDIZED_95 = interval_text(contrast$Standardized_low, contrast$Standardized_high, 3),
+          DIFFERENCE_AT_10_M = contrast$Difference_m,
+          DIFFERENCE_95_M = interval_text(contrast$Difference_low, contrast$Difference_high, 3))
+emit_rows(CV_MAE_GAIN_MM = 1000 * mean(cv_conc[, 3]),
+          CV_RANGE_MM = interval_text(1000 * min(cv_conc[, 3]), 1000 * max(cv_conc[, 3]), 3),
+          CV_PARTITIONS_FAVORING_CONCENTRATION = paste(sum(cv_conc[, 3] > 0), "of", CV_REPEATS),
+          CV_MIN_SEPARATION_M = min(cv_conc[, 4]))
+emit_rows(ABS_STANDARDIZED_RESIDUAL_ABOVE_2 = sum(abs(z_std) > 2),
+          ABOVE_3 = sum(abs(z_std) > 3), MAX_ABS_STANDARDIZED_RESIDUAL = max(abs(z_std)))
+emit_rows(LAG_RADIUS_M = LAG_RADIUS_M, TERRACES_WITH_NEIGHBORS = sum(lag_n > 0),
+          RESIDUAL_LAG_CORRELATION = lag_cor)
+res_table <- do.call(rbind, lapply(residual_models, function(m) m$near))
+emit_rows(MODEL = res_table$Model, R2 = res_table$R2, P_GLOBAL = fmt_p(res_table$P_global),
+          NEAR_RATIO = res_table$Ratio,
+          NEAR_NULL_95 = interval_text(res_table$Null_low, res_table$Null_high, 3),
+          P_NEAR = fmt_p(res_table$P))
+if (USE_DEM_MARKS) {
+  emit_rows(TERRAIN_MODEL = terrain_coef$Model, TERM = terrain_coef$Term,
+            ESTIMATE = terrain_coef$Estimate,
+            BLOCK_95 = interval_text(terrain_coef$Low, terrain_coef$High, 3))
+  emit_rows(CV_MAE_TERRAIN_M = mean(cv_terrain[, 1]),
+            CV_MAE_TERRAIN_CONCENTRATION_M = mean(cv_terrain[, 2]),
+            CV_GAIN_OF_CONCENTRATION_MM = 1000 * mean(cv_terrain[, 3]))
+}
+emit_rows(PEARSON_R = pearson_r, SPEARMAN_RS = spearman_rs,
+          SPEARMAN_95_BLOCK = interval_text(qv(rank_boot[, 1], .025), qv(rank_boot[, 1], .975), 3))
+emit_rows(MAX_COOK_DISTANCE = max(cooks), COOK_ABOVE_4_OVER_N = sum(cooks > 4 / n),
+          N_WITHOUT_ABS_Z_ABOVE_3 = length(keep_trim), SLOPE_WITHOUT = trim_model$summary$Beta,
+          SLOPE_WITHOUT_95_BLOCK = interval_text(trim_model$summary$Beta_low,
+                                                 trim_model$summary$Beta_high, 3),
+          CONTRAST_WITHOUT_PERCENT = trim_model$summary$Effect)
+emit_rows(SPLINE_DF = 3, DELTA_AIC_SPLINE_MINUS_LINEAR = curvature$Delta_AIC,
+          MAX_SPLINE_LINEAR_DIFFERENCE_PERCENT = curvature$Max_difference_pct,
+          P_SPLINE_TERMS_OLS = fmt_p(curvature$P))
+emit_rows(RESIDUAL_SD_BY_CONCENTRATION_QUARTILE = vector_text(residual_sd_quartile, 3))
+if (!is.null(vif)) emit_rows(VIF_TERM = names(vif), VIF = vif)
+emit_text("NOTE", paste("Regression diagnostics follow Drennan (2009), with outliers, curvature",
+                        "and thickness of the point cloud checked and a rank correlation as a",
+                        "robust alternative"))
+for (k in seq_len(nrow(res_table))) {
+  emit_text("RESULT", paste0(res_table$Model[k], ", near-range residual variogram ratio ",
+                             fmt_num(res_table$Ratio[k], 3), " against a null range of ",
+                             interval_text(res_table$Null_low[k], res_table$Null_high[k], 3)))
+}
+emit_text("NOTE", paste("F and p are ordinary least-squares statistics and assume independent",
+                        "terraces; block-bootstrap intervals account for spatial dependence, while",
+                        "labeling permutations assume exchangeable diameters"))
+emit_text("NOTE", paste("Sign-flip resampling keeps each residual magnitude and randomizes its",
+                        "sign, so the residual variogram test addresses covariance between",
+                        "neighbors"))
+```
+
+```{r chunk-42-heading-fig8, results='asis', echo=FALSE}
+# 42. Heading Figure 8
+heading("Figure 8. Robustness of short-range similarity", 2L)
+```
+
+```{r chunk-43-fig8-compute}
+# 43. Figure 8 compute
+sc_specs <- list(
+  list(label = "Alternative bands", keep = seq_len(n), breaks = MARK_BREAKS_ALT_M,
+       correction = "none", lower = 0),
+  list(label = "Border weighting", keep = seq_len(n), breaks = MARK_BREAKS_M,
+       correction = "border", lower = 0),
+  list(label = "Exclude pairs under 5 m", keep = seq_len(n), breaks = MARK_BREAKS_M,
+       correction = "none", lower = 5),
+  list(label = "Beyond maximum diameter", keep = seq_len(n), breaks = MARK_BREAKS_M,
+       correction = "none", lower = max(D) + sqrt(.Machine$double.eps)),
+  list(label = "Without upper 1 percent of diameters", keep = which(D <= qv(D, .99)),
+       breaks = MARK_BREAKS_M, correction = "none", lower = 0))
+for (g in seq_len(LOO_REGIONS)) {
+  sc_specs[[length(sc_specs) + 1L]] <- list(label = paste("Omit region", g),
+                                            keep = which(regions != g), breaks = MARK_BREAKS_M,
+                                            correction = "none", lower = 0)
+}
+if (length(close_vertices)) {
+  sc_specs[[length(sc_specs) + 1L]] <- list(label = "Exclude terraces in pairs under 2 m",
+                                            keep = keep_no_close, breaks = MARK_BREAKS_M,
+                                            correction = "none", lower = 0)
+  sc_specs[[length(sc_specs) + 1L]] <- list(label = "One terrace per group under 2 m",
+                                            keep = keep_one_close, breaks = MARK_BREAKS_M,
+                                            correction = "none", lower = 0)
+}
+sens <- lapply(seq_along(sc_specs), function(k) {
+  s <- sc_specs[[k]]
+  r <- run_marks(make_pairs(s$keep, s$breaks, s$correction, s$lower), N_SENS,
+                 SEED + 900000L + k * 10000L, s$label)
+  list(near = near_effect(r, s$label), fixed = fixed_effect(r, s$label))
+})
+sens_near <- rbind(near_effect(mark_global, "Global labeling"),
+                   near_effect(mark_regional, "Within-region labeling"),
+                   do.call(rbind, lapply(sens, `[[`, "near")))
+sens_fixed <- rbind(fixed_effect(mark_global, "Global labeling"),
+                    fixed_effect(mark_regional, "Within-region labeling"),
+                    do.call(rbind, lapply(sens, `[[`, "fixed")))
+near_group <- c("Global labeling" = "Primary nulls", "Within-region labeling" = "Primary nulls",
+                "Alternative bands" = "Bands and edges", "Border weighting" = "Bands and edges",
+                "Exclude pairs under 5 m" = "Geometry", "Beyond maximum diameter" = "Geometry",
+                "Without upper 1 percent of diameters" = "Influence",
+                "Exclude terraces in pairs under 2 m" = "Close pairs",
+                "One terrace per group under 2 m" = "Close pairs")
+sens_near$Group <- unname(near_group[sens_near$Scenario])
+sens_near$Group[grepl("^Omit region", sens_near$Scenario)] <- "Regions"
+sens_near$Group <- factor(sens_near$Group, levels = c("Primary nulls", "Bands and edges",
+                                                      "Geometry", "Influence", "Regions",
+                                                      "Close pairs"))
+sens_reg <- rbind(cbind(Scenario = "Primary, radius 100 m", boot_main$summary),
+                  do.call(rbind, lapply(setdiff(CONCENTRATION_RADII_M, PRIMARY_RADIUS_M),
+                                        function(r) {
+    cbind(Scenario = paste0("Radius ", r, " m"),
+          boot_model(seq_len(n), r, BOOT_BLOCK_M, N_SENS,
+                     SEED + 1200000L + as.integer(r) * 100L)$summary)
+  })),
+  do.call(rbind, lapply(c(250, 1000), function(w) {
+    cbind(Scenario = paste0("Blocks of ", w, " m"),
+          boot_model(seq_len(n), PRIMARY_RADIUS_M, w, N_SENS,
+                     SEED + 1400000L + as.integer(w) * 100L)$summary)
+  })),
+  cbind(Scenario = "Shifted block grid",
+        boot_model(seq_len(n), PRIMARY_RADIUS_M, BOOT_BLOCK_M, N_SENS, SEED + 1600000L,
+                   offset = rep(BOOT_BLOCK_M / 2, 2))$summary))
+sens_reg$Group <- ifelse(grepl("^Primary", sens_reg$Scenario), "Primary",
+                         ifelse(grepl("^Radius", sens_reg$Scenario), "Concentration radius",
+                                "Block design"))
+```
+
+```{r chunk-44-fig8-plot, fig.height=185 / 25.4}
+# 44. Figure 8 plot
+near_plot <- sens_near[sens_near$Supported, ]
+near_plot$Label <- paste0(near_plot$Scenario, " (", fmt_num(near_plot$Distance_min_m), "-",
+                          NEAR_MAX_M, " m)")
+near_plot$Label <- factor(near_plot$Label, levels = rev(near_plot$Label))
+p8a <- ggplot(near_plot, aes(Observed_ratio, Label)) +
+  geom_vline(xintercept = 1, linetype = "dashed", colour = COL[["neutral"]], linewidth = 0.4) +
+  geom_segment(aes(x = Null_low_ratio, xend = Null_high_ratio, yend = Label), colour = "grey80",
+               linewidth = 2.2) +
+  geom_point(aes(colour = Group), size = 2.3) +
+  scale_colour_viridis_d(option = "viridis", end = 0.9, name = NULL, drop = FALSE) +
+  guides(colour = guide_legend(nrow = 2)) +
+  labs(x = "Observed variogram divided by its null mean, pairs up to 50 m", y = NULL) +
+  theme_v7()
+reg_plot <- sens_reg
+reg_plot$Scenario <- factor(reg_plot$Scenario, levels = rev(reg_plot$Scenario))
+p8b <- ggplot(reg_plot, aes(Effect, Scenario, colour = Group)) +
+  geom_vline(xintercept = 0, linetype = "dashed", colour = COL[["neutral"]], linewidth = 0.4) +
+  geom_segment(aes(x = Effect_low, xend = Effect_high, yend = Scenario), linewidth = 0.8) +
+  geom_point(size = 2.3) +
+  scale_colour_manual(values = c("Primary" = COL[["observed"]],
+                                 "Concentration radius" = COL[["global"]],
+                                 "Block design" = COL[["outside"]]),
+                      breaks = c("Primary", "Concentration radius", "Block design"),
+                      name = NULL) +
+  labs(x = "Diameter contrast between concentration quartiles (%)", y = NULL) +
+  theme_v7()
+p8 <- (p8a / p8b) + plot_layout(heights = c(nrow(near_plot), nrow(reg_plot) + 2)) +
+  plot_annotation(tag_levels = "a")
+print(p8)
+SAVED_FIGURES <- c(SAVED_FIGURES, save_figure(p8, "FIGURE_8", FIG_HEIGHT_MM[["FIGURE_8"]]))
+```
+
+```{r chunk-45-fig8-caption, results='asis', echo=FALSE}
+# 45. Figure 8 caption
+print_caption("Figure", 8, paste(
+  "Robustness of short-range similarity. (a) Observed variogram divided by its null mean for",
+  "pairs up to 50 m under alternative bands, edge weighting, geometric cutoffs, influence,",
+  "regional omission and close-pair exclusions; grey bars are 95% null ranges. (b) Diameter",
+  "contrast between concentration quartiles with 95% spatial block-bootstrap intervals."))
+heading("Figure 8. Numerical description", 4L)
+```
+
+```{r chunk-46-fig8-report}
+# 46. Figure 8 report
+report_start("Figure 8", "Robustness of short-range similarity and of the concentration contrast",
+             paste("panel a observed over null-mean variogram for pairs up to 50 m with 95",
+                   "percent null range, panel b concentration-quartile contrast with 95 percent",
+                   "block-bootstrap interval"))
+emit_rows(SCENARIO = sens_near$Scenario,
+          DOMAIN_M = paste0(fmt_num(sens_near$Distance_min_m), "-", NEAR_MAX_M),
+          N = sens_near$N, PAIRS = sens_near$Pairs, RATIO = fmt_num(sens_near$Observed_ratio, 3),
+          NULL_95 = interval_text(sens_near$Null_low_ratio, sens_near$Null_high_ratio, 3),
+          P = fmt_p(sens_near$P_scalar))
+emit_rows(CONTRAST_SCENARIO = sens_reg$Scenario, EFFECT_PERCENT = fmt_num(sens_reg$Effect, 3),
+          EFFECT_95 = interval_text(sens_reg$Effect_low, sens_reg$Effect_high, 3))
+below <- (sens_near$Supported & sens_near$Observed_ratio < sens_near$Null_low_ratio) %in% TRUE
+emit_text("RESULT", paste0(sum(below), " of ", nrow(sens_near), " near-range scenarios fall below ",
+                           "the 95 percent null range, with ratios from ",
+                           interval_text(min(sens_near$Observed_ratio, na.rm = TRUE),
+                                         max(sens_near$Observed_ratio, na.rm = TRUE), 3)))
+emit_rows(FIXED_DOMAIN_SCENARIO = sens_fixed$Scenario,
+          RATIO_100_500_M = fmt_num(sens_fixed$Observed_ratio, 3),
+          NULL_95 = interval_text(sens_fixed$Null_low_ratio, sens_fixed$Null_high_ratio, 3))
+emit_text("NOTE", "Scenarios share the same inventory and are not independent tests")
+```
+
+```{r chunk-47-heading-tables, results='asis', echo=FALSE}
+# 47. Heading tables
+heading("3. Manuscript tables")
+heading("Table 1. Inventory and dimensional variability", 2L)
+```
+
+```{r chunk-48-table1-build}
+# 48. Table1 build
+table1 <- data.frame(
+  Statistic = c("Terraces", "Survey area (km2)", "Terraces per km2", "Mean diameter (m)",
+                "Standard deviation of diameter (m)", "Median diameter (m)",
+                "Interquartile range (m)", "Range (m)", "Coefficient of variation (%)",
+                "Terraces of 8 to 13 m (%)", "Gini coefficient of diameter",
+                "Gini coefficient of circular-equivalent area",
+                "Median nearest-neighbor distance (m)",
+                "Median minimum circular-equivalent gap (m)",
+                "Terraces with an overlapping circular equivalent"),
+  Value = c(fmt_num(n), fmt_num(area_km2, 6), fmt_num(n / area_km2, 4),
+            fmt_num(diam_summary$Mean, 4), fmt_num(diam_summary$SD, 3),
+            fmt_num(diam_summary$Median), interval_text(diam_summary$Q1, diam_summary$Q3),
+            interval_text(diam_summary$Min, diam_summary$Max), fmt_num(diam_summary$CV, 3),
+            fmt_num(100 * diam_summary$Share_typical, 4), fmt_num(diam_summary$Gini_D, 3),
+            fmt_num(diam_summary$Gini_area, 3), fmt_num(stats::median(nn_dist), 4),
+            fmt_num(stats::median(min_gap), 3), fmt_num(sum(min_gap < 0))))
+```
+
+```{r chunk-49-table1-caption, results='asis', echo=FALSE}
+# 49. Table1 caption
+print_caption("Table", 1, paste(
+  "Inventory and dimensional variability of the 2,526 Tairona terraces. Circular-equivalent",
+  "areas and gaps assume circular footprints."))
+print_table(table1)
+```
+
+```{r chunk-50-heading-table2, results='asis', echo=FALSE}
+# 50. Heading table2
+heading("Table 2. Spatial dependence, effect sizes and model adequacy", 2L)
+```
+
+```{r chunk-51-table2-build}
+# 51. Table2 build
+primary_p <- c(mark_global$curves$P_global[1], mark_regional$curves$P_global[1],
+               slope_p[["Global"]], slope_p[["Regional"]], res_m1$near$P_global)
+holm <- stats::p.adjust(primary_p, method = "holm")
+t2 <- list()
+add_row <- function(analysis, reference, estimate, range, p, draws) {
+  t2[[length(t2) + 1L]] <<- data.frame(Analysis = analysis, Reference = reference,
+                                       Estimate = estimate, Range = range, p = p, Draws = draws)
+}
+kernel_test <- if (is.null(pcf_calibrated)) pcf_main else pcf_calibrated
+add_row("Pair correlation at 20 m",
+        if (is.null(pcf_calibrated)) "Kernel intensity" else "Kernel intensity, calibrated",
+        fmt_num(value_at(kernel_test, 20), 4), envelope_at(kernel_test, 20),
+        fmt_p(kernel_test$P_global[1]),
+        if (is.null(pcf_calibrated)) fmt_num(N_SIM) else paste(N_CAL_OUTER, "x", N_CAL_INNER))
+if (!is.null(thomas_diag)) {
+  add_row("Pair correlation at 20 m", paste("Thomas,", trend_label),
+          fmt_num(value_at(thomas_diag, 20), 4), envelope_at(thomas_diag, 20),
+          fmt_p(thomas_diag$P_global[1]), fmt_num(N_MODEL))
+}
+if (!is.null(thomas_fine)) {
+  add_row("Fine-scale pair correlation at 5 m", paste("Thomas,", trend_label),
+          fmt_num(value_at(thomas_fine, 5), 4), envelope_at(thomas_fine, 5),
+          fmt_p(thomas_fine$P_global[1]), fmt_num(N_MODEL))
+}
+for (k in 1:2) {
+  add_row("Variogram ratio, 0 to 50 m", sens_near$Scenario[k],
+          fmt_num(sens_near$Observed_ratio[k], 3),
+          interval_text(sens_near$Null_low_ratio[k], sens_near$Null_high_ratio[k], 3),
+          paste0(fmt_p(primary_p[k]), " (Holm ", fmt_p(holm[k]), ")"), fmt_num(N_PERM))
+}
+for (k in 1:2) {
+  add_row(paste0("Neighbor correlation, ", bt[k], " m"), "Global labeling",
+          fmt_num(mark_global$rho$Observed[k], 3),
+          interval_text(mark_global$rho$Low[k], mark_global$rho$High[k], 3),
+          fmt_p(mark_global$decomposition$P_global[1]), fmt_num(N_PERM))
+}
+add_row("Concentration contrast, P25 to P75 (%)", "Spatial block bootstrap",
+        fmt_num(boot_main$summary$Effect, 3),
+        interval_text(boot_main$summary$Effect_low, boot_main$summary$Effect_high, 3),
+        paste0(fmt_p(slope_p[["Global"]]), " (Holm ", fmt_p(holm[3]), ")"), fmt_num(N_BOOT))
+add_row("Concentration contrast (SD of log diameter)", "Spatial block bootstrap",
+        fmt_num(contrast$Standardized, 3),
+        interval_text(contrast$Standardized_low, contrast$Standardized_high, 3), "",
+        fmt_num(N_BOOT))
+for (m in residual_models) {
+  add_row("Residual variogram ratio, 0 to 50 m", m$near$Model, fmt_num(m$near$Ratio, 3),
+          interval_text(m$near$Null_low, m$near$Null_high, 3),
+          if (m$near$Model == "M1 concentration") {
+            paste0(fmt_p(m$near$P_global), " (Holm ", fmt_p(holm[5]), ")")
+          } else fmt_p(m$near$P_global), fmt_num(N_SIM))
+}
+add_row("Cross-validated MAE gain (mm)", "Concentration model",
+        paste0(fmt_num(1000 * mean(cv_conc[, 3]), 3), " (", sum(cv_conc[, 3] > 0), " of ",
+               CV_REPEATS, " positive)"),
+        interval_text(1000 * min(cv_conc[, 3]), 1000 * max(cv_conc[, 3]), 3), "",
+        fmt_num(CV_REPEATS))
+table2 <- do.call(rbind, t2)
+names(table2) <- c("Analysis", "Reference", "Estimate", "95% range", "p", "Draws")
+```
+
+```{r chunk-52-table2-caption, results='asis', echo=FALSE}
+# 52. Table2 caption
+print_caption("Table", 2, paste(
+  "Spatial dependence, effect sizes and model adequacy. Ranges are 95% global envelopes at the",
+  "stated distance, 95% null ranges for ratios and correlations, or 95% spatial block-bootstrap",
+  "intervals. Labeling and residual p values are global envelope tests over 0 to 2 km; the Holm",
+  "adjustment covers the five primary tests."))
+print_table(table2)
+heading("Table 2. Numerical description", 4L)
+```
+
+```{r chunk-53-table2-report}
+# 53. Table2 report
+report_start("Table 2", "Primary tests with Holm adjustment", "one line per primary test")
+emit_rows(PRIMARY_TEST = c("Joint marks, global labeling", "Joint marks, within-region labeling",
+                           "Concentration slope, global labeling",
+                           "Concentration slope, within-region labeling",
+                           "Residual variogram, M1 concentration"),
+          P = fmt_p(primary_p), HOLM = fmt_p(holm))
+```
+
+```{r chunk-54-heading-audit, results='asis', echo=FALSE}
+# 54. Heading audit
+heading("4. Audit and reproducibility")
+```
+
+```{r chunk-55-audit}
+# 55. Audit and reproducibility
+SAVED_FIGURES <- unique(SAVED_FIGURES)
+stopifnot(identical(D_ORIGINAL, D), nrow(terraces) == EXPECTED_TERRACES,
+          length(SAVED_FIGURES) == 6L, all(file.exists(SAVED_FIGURES)),
+          identical(basename(SAVED_FIGURES), paste0("FIGURE_", 3:8, ".pdf")),
+          max(mark_global$identity_error, mark_regional$identity_error) < 1e-9,
+          nrow(cv_conc) == CV_REPEATS, all(cv_conc[, 4] >= CV_BUFFER_M))
+report_start("Audit", "Checks, inputs, computation and environment", "one line per item")
+emit_rows(FIGURE_FOLDER = FIG_DIR, FIGURE_FILES = paste(basename(SAVED_FIGURES), collapse = ", "))
+input_files <- c(terrace_path, polygon_path, dem_path)
+emit_rows(GITHUB_REPOSITORY = paste(GITHUB_OWNER, GITHUB_REPO, sep = "/"),
+          GITHUB_REF = GITHUB_REF, GITHUB_FOLDER = GITHUB_FOLDER)
+emit_rows(INPUT = basename(input_files), MD5 = unname(tools::md5sum(input_files)))
+emit_rows(MONTE_CARLO_RUNS = nrow(MC_LOG), FROM_CACHE = sum(MC_LOG$Cached),
+          COMPUTED = sum(!MC_LOG$Cached), MONTE_CARLO_SECONDS = sum(MC_LOG$Seconds),
+          SLOWEST_RUN = MC_LOG$Label[which.max(MC_LOG$Seconds)],
+          SLOWEST_SECONDS = max(MC_LOG$Seconds))
+emit_rows(CACHE = USE_CACHE, CACHE_DIR = CACHE_DIR)
+emit_rows(SEED = SEED, R = R.version.string, PLATFORM = R.version$platform,
+          OS = Sys.info()[["sysname"]], WORKERS = CPU_WORKERS)
+emit_rows(PACKAGES = paste(vapply(req, function(p)
+  paste0(p, " ", as.character(utils::packageVersion(p))), character(1)), collapse = ", "))
+emit_rows(MAP_PACKAGE = paste0("ggspatial ", as.character(utils::packageVersion("ggspatial"))))
+emit_rows(QUICK_TEST = QUICK_TEST, RESULTS_FOR_INFERENCE = !QUICK_TEST,
+          TERRAIN_MARKS = USE_DEM_MARKS, TERRAIN_INTENSITY = USE_DEM_INTENSITY,
+          ELAPSED_SECONDS = round(as.numeric(difftime(Sys.time(), RUN_STARTED_AT,
+                                                      units = "secs")), 1))
+if (!is.null(CLUSTER)) {
+  parallel::stopCluster(CLUSTER)
+  CLUSTER <- NULL
+}
+```
