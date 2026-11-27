@@ -1,4 +1,4 @@
-Architectural uniformity and spatial variation in Tairona residential terraces of the Río Frío basin, Colombia
+Architectural uniformity and spatial variation in Tairona residential terraces of the Río Frío basin, Colombia (under review)
 --------------------------------------------------------------
 This repository contains the R code and data used to analyze architectural uniformity and spatial variation among 2,526 residential terraces attributed to the Tairona period (approximately AD 1000 to 1600) in the Río Frío basin (Sierra Nevada de Santa Marta, Colombia), and to examine whether terrace diameter similarity varies with distance, local architectural concentration, and terrain characteristics.
 
